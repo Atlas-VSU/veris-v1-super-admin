@@ -77,9 +77,11 @@ export async function fetchOrganizations(
       programId: programId,
       programName: program?.name ?? null,
       programAcronym: program?.acronym ?? null,
-      isArchived: d.isArchived ?? d.isArchived ?? false,
+      isArchived: d.isArchived ?? false,
       subscribed: d.subscribed ?? false,
       subscriptionTier: (d.subscriptionTier ?? null) as SubscriptionTier | null,
+      orgLogoUrl: d.orgLogoUrl ?? null,
+
     };
   });
 }

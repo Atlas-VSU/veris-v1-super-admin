@@ -177,7 +177,16 @@ export function OrgAccountDetailSheet({
                 <DetailRow
                   icon={Building2}
                   label="Name"
-                  value={linkedOrg.name}
+                  value={
+                    <div className="flex items-center gap-2">
+                      {linkedOrg.orgLogoUrl && (
+                        <div className="h-5 w-5 rounded bg-white flex items-center justify-center shrink-0 overflow-hidden border border-slate-200">
+                          <img src={linkedOrg.orgLogoUrl} alt={linkedOrg.name} className="h-full w-full object-cover" />
+                        </div>
+                      )}
+                      <span>{linkedOrg.name}</span>
+                    </div>
+                  }
                 />
                 <DetailRow
                   icon={Tag}

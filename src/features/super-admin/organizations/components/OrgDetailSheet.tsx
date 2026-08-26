@@ -107,8 +107,12 @@ export function OrgDetailSheet({
           <SheetHeader className="p-0 pb-2 pr-8">
             <div className="flex items-start gap-3">
               {/* Logo / Avatar representation */}
-              <div className="flex items-center justify-center h-12 w-12 rounded-full bg-blue-600 text-white font-bold text-sm shrink-0 shadow-sm">
-                {org.shortName ? org.shortName.substring(0, 3).toUpperCase() : org.name.substring(0, 2).toUpperCase()}
+              <div className={`flex items-center justify-center h-12 w-12 rounded-full font-bold text-sm shrink-0 shadow-sm overflow-hidden border ${org.orgLogoUrl ? "bg-white border-slate-200" : "bg-blue-600 text-white border-blue-100"}`}>
+                {org.orgLogoUrl ? (
+                  <img src={org.orgLogoUrl} alt={org.name} className="h-full w-full object-cover" />
+                ) : (
+                  org.shortName ? org.shortName.substring(0, 3).toUpperCase() : org.name.substring(0, 2).toUpperCase()
+                )}
               </div>
               <div className="min-w-0 flex-1">
                 <SheetTitle className="text-base font-bold text-slate-800 leading-tight">
