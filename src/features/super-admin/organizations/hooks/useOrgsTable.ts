@@ -8,6 +8,7 @@ import { Organization } from "@/constants/types";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import type { CreateOrgFormData, EditOrgFormData } from "../types/dialogs.types";
 import { batchUpdateAccounts, getAccountsByOrgId } from "@/firebase/accounts";
+import { revalidateOrgPages } from "@/app/actions/revalidate";
 
 
 interface useOrgsTableProps {
@@ -159,6 +160,7 @@ export function useOrgsTable({ itemsPerPage }: useOrgsTableProps) {
       };
 
       setLocalOrgs((prev) => [newOrg, ...prev]);
+      await revalidateOrgPages();
       toast.success(`Organization "${newOrg.name}" has been created!`);
     } catch (err) {
       toast.error(`Failed to create organization.${err}`);
@@ -221,6 +223,7 @@ export function useOrgsTable({ itemsPerPage }: useOrgsTableProps) {
         })
       );
       toast.success("Organization details updated successfully!");
+      await revalidateOrgPages();
     } catch (err) {
       toast.error("Failed to update organization.");
     }
@@ -261,6 +264,7 @@ export function useOrgsTable({ itemsPerPage }: useOrgsTableProps) {
       const actionText = nextArchiveState ? "archived" : "reactivated";
       toast.success(`Organization "${archiveTargetOrg.name}" has been ${actionText}.`);
       setArchiveConfirmOpen(false);
+      await revalidateOrgPages();
     } catch (err) {
       toast.error("Failed to update organization archive status.");
     }

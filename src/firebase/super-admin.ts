@@ -70,7 +70,7 @@ export async function fetchOrganizations(
       id: doc.id,
       name: d.name ?? "",
       shortName: d.shortName ?? "",
-      level: d.accessLevel,
+      level: d.accessLevel === 1 ? "department" : d.accessLevel === 2 ? "faculty" : "council",
       facultyId: facultyId,
       facultyName: faculty?.name ?? null,
       facultyAcronym: faculty?.acronym ?? null,
