@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { toast } from "sonner";
-import type { SuperAdminOrg, SubscriptionTier, Term, OrgSubscription, OrgLevel } from "@/features/super-admin/types";
+import type { SuperAdminOrg, SubscriptionTier, Term, OrgSubscription, OrgLevel, SortOption } from "@/features/super-admin/types";
 import { getAllTerms } from "@/firebase/term";
 import { getSubscriptionsForTerm, getSubscriptionHistoryForOrg, updateTier, saveSubscription, deriveSubscriptionStatus } from "@/firebase/subscriptions";
 import { usePagination } from "@/hooks/usePagination";
@@ -20,6 +20,7 @@ export function useSuperAdminTerms(orgs: SuperAdminOrg[]) {
   const [tierFilter, setTierFilter] = useState<SubscriptionTier | "all" | "none">("all");
   const [statusFilter, setStatusFilter] = useState<OrgSubscription["subscriptionStatus"] | "all" | "needsRenewal">("all");
   const [levelFilter, setLevelFilter] = useState<OrgLevel | "all">("all");
+  const [sortBy, setSortBy] = useState<SortOption>("date-newest");
 
   const [addTermOpen, setAddTermOpen] = useState(false);
   const [setActiveTermOpen, setSetActiveTermOpen] = useState(false);
@@ -119,7 +120,7 @@ export function useSuperAdminTerms(orgs: SuperAdminOrg[]) {
   }, [orgs, subscriptions, selectedTermId]);
 
   const filteredOrgs = useMemo(() => {
-    return mappedOrganizations.filter((org) => {
+    const result = mappedOrganizations.filter((org) => {
       if (org.isArchived) return false;
 
       if (searchQuery.trim()) {
@@ -150,7 +151,21 @@ export function useSuperAdminTerms(orgs: SuperAdminOrg[]) {
 
       return true;
     });
-  }, [mappedOrganizations, searchQuery, tierFilter, statusFilter, levelFilter]);
+
+    result.sort((a, b) => {
+      if (sortBy === "name-asc") return a.name.localeCompare(b.name);
+      if (sortBy === "name-desc") return b.name.localeCompare(a.name);
+      if (sortBy === "date-newest") {
+        return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+      }
+      if (sortBy === "date-oldest") {
+        return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+      }
+      return 0;
+    });
+
+    return result;
+  }, [mappedOrganizations, searchQuery, tierFilter, statusFilter, levelFilter, sortBy]);
 
   // --- STATS AGGREGATION ---
   const termStats = useMemo(() => {
@@ -325,7 +340,7 @@ export function useSuperAdminTerms(orgs: SuperAdminOrg[]) {
     setCurrentPage,
     totalPages,
     paginatedItems: paginatedOrgs,
-  } = usePagination(filteredOrgs, 10, [searchQuery, tierFilter, statusFilter, levelFilter]);
+  } = usePagination(filteredOrgs, 10, [searchQuery, tierFilter, statusFilter, levelFilter, sortBy]);
 
   return {
     terms,
@@ -339,6 +354,8 @@ export function useSuperAdminTerms(orgs: SuperAdminOrg[]) {
     setStatusFilter,
     levelFilter,
     setLevelFilter,
+    sortBy,
+    setSortBy,
     selectedTerm,
     filteredOrgs,
     paginatedOrgs,

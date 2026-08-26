@@ -50,6 +50,8 @@ export function OrgAccountsTable({
     setFacultyFilter,
     orgFilter,
     setOrgFilter,
+    sortBy,
+    setSortBy,
     faculties,
     filteredOrgs,
     search,
@@ -108,6 +110,8 @@ export function OrgAccountsTable({
         setFacultyFilter={setFacultyFilter}
         orgFilter={orgFilter}
         setOrgFilter={setOrgFilter}
+        sortBy={sortBy}
+        setSortBy={setSortBy}
         faculties={faculties}
         filteredOrgs={filteredOrgs}
         totalResults={filtered.length}

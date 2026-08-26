@@ -34,6 +34,8 @@ export default function SuperAdminTermsPage({ orgs }: { orgs: SuperAdminOrg[] })
     setStatusFilter,
     levelFilter,
     setLevelFilter,
+    sortBy,
+    setSortBy,
     selectedTerm,
     filteredOrgs,
     paginatedOrgs,
@@ -125,6 +127,8 @@ export default function SuperAdminTermsPage({ orgs }: { orgs: SuperAdminOrg[] })
           setStatusFilter={setStatusFilter}
           levelFilter={levelFilter}
           setLevelFilter={setLevelFilter}
+          sortBy={sortBy}
+          setSortBy={setSortBy}
           filteredCount={filteredOrgs.length}
         />
 

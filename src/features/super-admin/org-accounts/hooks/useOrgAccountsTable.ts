@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
-import type { SuperAdminOrgAccount, SuperAdminOrg, OrgLevel } from "@/features/super-admin/types";
+import type { SuperAdminOrgAccount, SuperAdminOrg, OrgLevel, SortOption } from "@/features/super-admin/types";
 import type { EditAccountFormData } from "../types/dialogs.types";
 import { updateAccount } from "@/firebase/accounts";
 import { toast } from "sonner";
@@ -7,6 +7,7 @@ import { usePagination } from "@/hooks/usePagination";
 
 export function useOrgAccountsTable(accounts: SuperAdminOrgAccount[], orgs: SuperAdminOrg[]) {
   const [activeFilter, setActiveFilter] = useState<"all" | "active" | "inactive">("all");
+  const [sortBy, setSortBy] = useState<SortOption>("date-newest");
   const [deletedFilter, setDeletedFilter] = useState<"all" | "notDeleted" | "deleted">("all");
   const [levelFilter, setLevelFilter] = useState<OrgLevel | "all">("all");
   const [facultyFilter, setFacultyFilter] = useState<string>("all");
@@ -68,7 +69,7 @@ export function useOrgAccountsTable(accounts: SuperAdminOrgAccount[], orgs: Supe
   }, [levelFilter, facultyFilter, orgFilter, orgMap]);
 
   const filtered = useMemo(() => {
-    return localAccounts.filter((acc) => {
+    const result = localAccounts.filter((acc) => {
       if (activeFilter === "active" && !acc.isActive) return false;
       if (activeFilter === "inactive" && acc.isActive) return false;
       if (deletedFilter === "notDeleted" && acc.isDeleted) return false;
@@ -89,7 +90,21 @@ export function useOrgAccountsTable(accounts: SuperAdminOrgAccount[], orgs: Supe
       }
       return true;
     });
-  }, [localAccounts, activeFilter, deletedFilter, orgFilter, levelFilter, facultyFilter, search, orgMap]);
+
+    result.sort((a, b) => {
+      if (sortBy === "name-asc") return a.fullName.localeCompare(b.fullName);
+      if (sortBy === "name-desc") return b.fullName.localeCompare(a.fullName);
+      if (sortBy === "date-newest") {
+        return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+      }
+      if (sortBy === "date-oldest") {
+        return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+      }
+      return 0;
+    });
+
+    return result;
+  }, [localAccounts, activeFilter, deletedFilter, orgFilter, levelFilter, facultyFilter, search, sortBy, orgMap]);
 
   const {
     currentPage,
@@ -103,6 +118,7 @@ export function useOrgAccountsTable(accounts: SuperAdminOrgAccount[], orgs: Supe
     levelFilter,
     facultyFilter,
     orgFilter,
+    sortBy,
   ]);
 
   const linkedOrg = selectedAccount
@@ -190,6 +206,8 @@ export function useOrgAccountsTable(accounts: SuperAdminOrgAccount[], orgs: Supe
     setFacultyFilter,
     orgFilter,
     setOrgFilter,
+    sortBy,
+    setSortBy,
     faculties,
     filteredOrgs,
     search,

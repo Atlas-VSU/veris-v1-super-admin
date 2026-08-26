@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Search, Plus, SlidersHorizontal, X } from "lucide-react";
-import type { OrgLevel, SubscriptionTier } from "@/features/super-admin/types";
+import type { OrgLevel, SubscriptionTier, SortOption } from "@/features/super-admin/types";
 
 interface OrgFilterHeaderProps {
   search: string;
@@ -22,8 +22,8 @@ interface OrgFilterHeaderProps {
   setStatusFilter: (status: "all" | "active" | "inactive" | "archived") => void;
   tierFilter: SubscriptionTier | "all";
   setTierFilter: (tier: SubscriptionTier | "all") => void;
-  sortBy: "name-asc" | "name-desc" | "date-newest" | "date-oldest";
-  setSortBy: (sort: "name-asc" | "name-desc" | "date-newest" | "date-oldest") => void;
+  sortBy: SortOption;
+  setSortBy: (sort: SortOption) => void;
   onCreateClick: () => void;
   totalResults?: number;
 }
@@ -92,6 +92,22 @@ export function OrgFilterHeader({
             )}
           </Button>
 
+          {/* Sort Select */}
+          <Select
+            value={sortBy}
+            onValueChange={(v) => setSortBy(v as typeof sortBy)}
+          >
+            <SelectTrigger className="w-[195px] h-10 text-sm border-blue-100 bg-white shadow-sm">
+              <SelectValue placeholder="Sort by" />
+            </SelectTrigger>
+            <SelectContent className="bg-white border-slate-200 text-xs">
+              <SelectItem value="name-asc">Alphabetical (A-Z)</SelectItem>
+              <SelectItem value="name-desc">Alphabetical (Z-A)</SelectItem>
+              <SelectItem value="date-newest">Recently Created</SelectItem>
+              <SelectItem value="date-oldest">Oldest Created</SelectItem>
+            </SelectContent>
+          </Select>
+
           {/* Clear Filters Button */}
           {hasAnyFilter && (
             <Button
@@ -110,23 +126,8 @@ export function OrgFilterHeader({
           </div>
         </div>
 
-        {/* Sort and Create Button */}
+        {/* Create Button */}
         <div className="flex items-center gap-3">
-          <Select
-            value={sortBy}
-            onValueChange={(v) => setSortBy(v as typeof sortBy)}
-          >
-            <SelectTrigger className="w-[195px] h-10 text-sm border-blue-100 bg-white shadow-sm">
-              <SelectValue placeholder="Sort by" />
-            </SelectTrigger>
-            <SelectContent className="bg-white border-slate-200 text-xs">
-              <SelectItem value="name-asc">Alphabetical (A-Z)</SelectItem>
-              <SelectItem value="name-desc">Alphabetical (Z-A)</SelectItem>
-              <SelectItem value="date-newest">Date Updated (Newest)</SelectItem>
-              <SelectItem value="date-oldest">Date Updated (Oldest)</SelectItem>
-            </SelectContent>
-          </Select>
-
           <Button
             onClick={onCreateClick}
             size="sm"

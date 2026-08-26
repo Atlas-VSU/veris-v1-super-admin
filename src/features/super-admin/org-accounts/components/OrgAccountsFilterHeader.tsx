@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { OrgLevel } from "@/features/super-admin/types";
+import type { OrgLevel, SortOption } from "@/features/super-admin/types";
 
 interface OrgAccountsFilterHeaderProps {
   search: string;
@@ -26,6 +26,8 @@ interface OrgAccountsFilterHeaderProps {
   setFacultyFilter: (faculty: string) => void;
   orgFilter: string;
   setOrgFilter: (org: string) => void;
+  sortBy: SortOption;
+  setSortBy: (sort: SortOption) => void;
   faculties: Array<{ id: string; name: string; acronym: string }>;
   filteredOrgs: Array<{ id: string; name: string }>;
   totalResults: number;
@@ -44,6 +46,8 @@ export function OrgAccountsFilterHeader({
   setFacultyFilter,
   orgFilter,
   setOrgFilter,
+  sortBy,
+  setSortBy,
   faculties,
   filteredOrgs,
   totalResults,
@@ -98,6 +102,22 @@ export function OrgAccountsFilterHeader({
             </span>
           )}
         </Button>
+
+        {/* Sort Select */}
+        <Select
+          value={sortBy}
+          onValueChange={(v) => setSortBy(v as SortOption)}
+        >
+          <SelectTrigger className="w-[195px] h-10 text-sm border-blue-100 bg-white shadow-sm">
+            <SelectValue placeholder="Sort by" />
+          </SelectTrigger>
+          <SelectContent className="bg-white border-slate-200 text-xs">
+            <SelectItem value="name-asc">Alphabetical (A-Z)</SelectItem>
+            <SelectItem value="name-desc">Alphabetical (Z-A)</SelectItem>
+            <SelectItem value="date-newest">Recently Created</SelectItem>
+            <SelectItem value="date-oldest">Oldest Created</SelectItem>
+          </SelectContent>
+        </Select>
 
         {hasAnyFilter && (
           <Button

@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import type { SuperAdminOrg, SuperAdminOrgAccount, OrgLevel, SubscriptionTier, SuperAdminFaculty, SuperAdminProgram } from "@/features/super-admin/types";
+import type { SuperAdminOrg, SuperAdminOrgAccount, OrgLevel, SubscriptionTier, SuperAdminFaculty, SuperAdminProgram, SortOption } from "@/features/super-admin/types";
 import { createOrganization, fetchOrganizationsPaginated, updateOrganization } from "@/firebase/organizations";
 import { getFaculties } from "@/firebase/faculties";
 import { getPrograms } from "@/firebase/programs";
@@ -24,7 +24,7 @@ export function useOrgsTable({ itemsPerPage }: useOrgsTableProps) {
   const [levelFilter, setLevelFilter] = useState<OrgLevel | "all">("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive" | "archived">("all");
   const [tierFilter, setTierFilter] = useState<SubscriptionTier | "all">("all");
-  const [sortBy, setSortBy] = useState<"name-asc" | "name-desc" | "date-newest" | "date-oldest">("name-asc");
+  const [sortBy, setSortBy] = useState<SortOption>("date-newest");
   const [currentPage, setCurrentPage] = useState(1);
   const cursorRef = useRef<Record<number, any>>({});
   const [isLoading, setIsLoading] = useState(false);

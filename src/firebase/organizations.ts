@@ -64,7 +64,7 @@ export const fetchOrganizationsPaginated = async (
   pageSize: number = 10,
   lastVisibleDoc: any = null,
   searchTerm: string = "",
-  sortBy: string = "name-asc",
+  sortBy: string = "date-newest",
   lvlFilter: string = "3",
   statFilter: string = "all",
   tierFilter: string = "all",
@@ -90,10 +90,10 @@ export const fetchOrganizationsPaginated = async (
     constraints.push(orderBy("name", "desc"));
   }
   if (sortBy === "date-newest") { 
-    constraints.push(orderBy("metadata.updatedAt", "desc"));
+    constraints.push(orderBy("metadata.createdAt", "desc"));
   }
   if (sortBy === "date-oldest") { 
-    constraints.push(orderBy("metadata.updatedAt", "asc"));
+    constraints.push(orderBy("metadata.createdAt", "asc"));
   }
   if (lvlFilter !== "all") {
     if (lvlFilter === "department") {

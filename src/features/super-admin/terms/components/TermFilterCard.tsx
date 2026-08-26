@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Search, Info, SlidersHorizontal, X } from "lucide-react";
-import type { SubscriptionTier, Term, OrgLevel } from "../../types";
+import type { SubscriptionTier, Term, OrgLevel, SortOption } from "../../types";
 
 interface TermFilterCardProps {
   terms: Term[];
@@ -27,6 +27,8 @@ interface TermFilterCardProps {
   setStatusFilter: (status: any) => void;
   levelFilter: OrgLevel | "all";
   setLevelFilter: (level: OrgLevel | "all") => void;
+  sortBy: SortOption;
+  setSortBy: (sort: SortOption) => void;
   filteredCount: number;
 }
 
@@ -43,6 +45,8 @@ export function TermFilterCard({
   setStatusFilter,
   levelFilter,
   setLevelFilter,
+  sortBy,
+  setSortBy,
   filteredCount,
 }: TermFilterCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -123,6 +127,22 @@ export function TermFilterCard({
               </span>
             )}
           </Button>
+
+          {/* Sort Dropdown */}
+          <Select
+            value={sortBy}
+            onValueChange={(v) => setSortBy(v as SortOption)}
+          >
+            <SelectTrigger className="w-[195px] h-10 text-sm border-blue-100 bg-white shadow-sm">
+              <SelectValue placeholder="Sort by" />
+            </SelectTrigger>
+            <SelectContent className="bg-white border-slate-200 text-xs">
+              <SelectItem value="name-asc">Alphabetical (A-Z)</SelectItem>
+              <SelectItem value="name-desc">Alphabetical (Z-A)</SelectItem>
+              <SelectItem value="date-newest">Recently Created</SelectItem>
+              <SelectItem value="date-oldest">Oldest Created</SelectItem>
+            </SelectContent>
+          </Select>
 
           {/* Clear Filters Button */}
           {hasAnyFilter && (
