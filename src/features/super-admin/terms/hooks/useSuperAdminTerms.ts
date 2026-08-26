@@ -1,8 +1,9 @@
 import { useState, useMemo, useEffect } from "react";
 import { toast } from "sonner";
-import type { SuperAdminOrg, SubscriptionTier, Term, OrgSubscription } from "@/features/super-admin/types";
+import type { SuperAdminOrg, SubscriptionTier, Term, OrgSubscription, OrgLevel } from "@/features/super-admin/types";
 import { getAllTerms } from "@/firebase/term";
 import { getSubscriptionsForTerm, getSubscriptionHistoryForOrg, updateTier, saveSubscription, deriveSubscriptionStatus } from "@/firebase/subscriptions";
+import { usePagination } from "@/hooks/usePagination";
 
 export interface MappedOrg extends SuperAdminOrg {
   termSub: OrgSubscription;
@@ -18,6 +19,7 @@ export function useSuperAdminTerms(orgs: SuperAdminOrg[]) {
   const [searchQuery, setSearchQuery] = useState("");
   const [tierFilter, setTierFilter] = useState<SubscriptionTier | "all" | "none">("all");
   const [statusFilter, setStatusFilter] = useState<OrgSubscription["subscriptionStatus"] | "all" | "needsRenewal">("all");
+  const [levelFilter, setLevelFilter] = useState<OrgLevel | "all">("all");
 
   const [addTermOpen, setAddTermOpen] = useState(false);
   const [setActiveTermOpen, setSetActiveTermOpen] = useState(false);
@@ -127,6 +129,8 @@ export function useSuperAdminTerms(orgs: SuperAdminOrg[]) {
         if (!matchesName && !matchesFaculty) return false;
       }
 
+      if (levelFilter !== "all" && org.level !== levelFilter) return false;
+
       if (tierFilter !== "all") {
         if (tierFilter === "none") {
           if (org.termSub.subscriptionTier !== null) return false;
@@ -146,7 +150,7 @@ export function useSuperAdminTerms(orgs: SuperAdminOrg[]) {
 
       return true;
     });
-  }, [mappedOrganizations, searchQuery, tierFilter, statusFilter]);
+  }, [mappedOrganizations, searchQuery, tierFilter, statusFilter, levelFilter]);
 
   // --- STATS AGGREGATION ---
   const termStats = useMemo(() => {
@@ -316,6 +320,13 @@ export function useSuperAdminTerms(orgs: SuperAdminOrg[]) {
     return subscriptions.find((s) => s.organizationId === selectedOrg.id && s.termId === selectedTermId) || null;
   }, [selectedOrg, subscriptions, selectedTermId]);
 
+  const {
+    currentPage,
+    setCurrentPage,
+    totalPages,
+    paginatedItems: paginatedOrgs,
+  } = usePagination(filteredOrgs, 10, [searchQuery, tierFilter, statusFilter, levelFilter]);
+
   return {
     terms,
     selectedTermId,
@@ -326,8 +337,14 @@ export function useSuperAdminTerms(orgs: SuperAdminOrg[]) {
     setTierFilter,
     statusFilter,
     setStatusFilter,
+    levelFilter,
+    setLevelFilter,
     selectedTerm,
     filteredOrgs,
+    paginatedOrgs,
+    currentPage,
+    setCurrentPage,
+    totalPages,
     termStats,
     selectedOrg,
     setActiveTermOpen,
