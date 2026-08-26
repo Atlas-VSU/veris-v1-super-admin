@@ -1,12 +1,15 @@
 import { useState, useMemo, useEffect } from "react";
-import type { SuperAdminOrgAccount, SuperAdminOrg } from "@/features/super-admin/types";
+import type { SuperAdminOrgAccount, SuperAdminOrg, OrgLevel } from "@/features/super-admin/types";
 import type { EditAccountFormData } from "../types/dialogs.types";
 import { updateAccount } from "@/firebase/accounts";
 import { toast } from "sonner";
+import { usePagination } from "@/hooks/usePagination";
 
 export function useOrgAccountsTable(accounts: SuperAdminOrgAccount[], orgs: SuperAdminOrg[]) {
   const [activeFilter, setActiveFilter] = useState<"all" | "active" | "inactive">("all");
   const [deletedFilter, setDeletedFilter] = useState<"all" | "notDeleted" | "deleted">("all");
+  const [levelFilter, setLevelFilter] = useState<OrgLevel | "all">("all");
+  const [facultyFilter, setFacultyFilter] = useState<string>("all");
   const [orgFilter, setOrgFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
   const [selectedAccount, setSelectedAccount] = useState<SuperAdminOrgAccount | null>(null);
@@ -24,13 +27,58 @@ export function useOrgAccountsTable(accounts: SuperAdminOrgAccount[], orgs: Supe
     setLocalAccounts(accounts);
   }, [accounts]);
 
+  // Compute unique faculties from orgs list
+  const faculties = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; acronym: string }>();
+    orgs.forEach((org) => {
+      if (org.facultyId && org.facultyName) {
+        map.set(org.facultyId, {
+          id: org.facultyId,
+          name: org.facultyName,
+          acronym: org.facultyAcronym || "",
+        });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [orgs]);
+
+  // Filter organizations shown in the select dropdown based on level and faculty filters
+  const filteredOrgs = useMemo(() => {
+    return orgs.filter((org) => {
+      if (levelFilter !== "all" && org.level !== levelFilter) return false;
+      if (facultyFilter !== "all" && org.facultyId !== facultyFilter) return false;
+      return true;
+    });
+  }, [orgs, levelFilter, facultyFilter]);
+
+  // Reset selected organization if it gets filtered out by level/faculty changes
+  useEffect(() => {
+    if (orgFilter !== "all") {
+      const selectedOrg = orgMap.get(orgFilter);
+      if (selectedOrg) {
+        const matchesLevel = levelFilter === "all" || selectedOrg.level === levelFilter;
+        const matchesFaculty = facultyFilter === "all" || selectedOrg.facultyId === facultyFilter;
+        if (!matchesLevel || !matchesFaculty) {
+          setOrgFilter("all");
+        }
+      } else {
+        setOrgFilter("all");
+      }
+    }
+  }, [levelFilter, facultyFilter, orgFilter, orgMap]);
+
   const filtered = useMemo(() => {
     return localAccounts.filter((acc) => {
       if (activeFilter === "active" && !acc.isActive) return false;
       if (activeFilter === "inactive" && acc.isActive) return false;
       if (deletedFilter === "notDeleted" && acc.isDeleted) return false;
       if (deletedFilter === "deleted" && !acc.isDeleted) return false;
+      
+      const org = orgMap.get(acc.orgId);
+      if (levelFilter !== "all" && org?.level !== levelFilter) return false;
+      if (facultyFilter !== "all" && org?.facultyId !== facultyFilter) return false;
       if (orgFilter !== "all" && acc.orgId !== orgFilter) return false;
+
       if (search.trim()) {
         const q = search.toLowerCase();
         return (
@@ -41,7 +89,21 @@ export function useOrgAccountsTable(accounts: SuperAdminOrgAccount[], orgs: Supe
       }
       return true;
     });
-  }, [accounts,localAccounts, activeFilter, deletedFilter, orgFilter, search]);
+  }, [localAccounts, activeFilter, deletedFilter, orgFilter, levelFilter, facultyFilter, search, orgMap]);
+
+  const {
+    currentPage,
+    setCurrentPage,
+    totalPages,
+    paginatedItems: paginatedAccounts,
+  } = usePagination(filtered, 10, [
+    search,
+    activeFilter,
+    deletedFilter,
+    levelFilter,
+    facultyFilter,
+    orgFilter,
+  ]);
 
   const linkedOrg = selectedAccount
     ? orgMap.get(selectedAccount.orgId) ?? null
@@ -122,8 +184,14 @@ export function useOrgAccountsTable(accounts: SuperAdminOrgAccount[], orgs: Supe
     setActiveFilter,
     deletedFilter,
     setDeletedFilter,
+    levelFilter,
+    setLevelFilter,
+    facultyFilter,
+    setFacultyFilter,
     orgFilter,
     setOrgFilter,
+    faculties,
+    filteredOrgs,
     search,
     setSearch,
     selectedAccount,
@@ -131,6 +199,10 @@ export function useOrgAccountsTable(accounts: SuperAdminOrgAccount[], orgs: Supe
     sheetOpen,
     setSheetOpen,
     filtered,
+    paginatedAccounts,
+    currentPage,
+    setCurrentPage,
+    totalPages,
     linkedOrg,
     handleRowClick,
     editOpen,
