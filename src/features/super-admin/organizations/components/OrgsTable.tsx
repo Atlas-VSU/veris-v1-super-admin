@@ -80,6 +80,7 @@ export function OrgsTable({isLoading = false }: OrgsTableProps) {
     itemsPerPage,
     faculties,
     programs,
+    totalOrgsCount,
   } = useOrgsTable({itemsPerPage:10});
 
   const linkedAccounts = useMemo(() => {
@@ -113,6 +114,7 @@ export function OrgsTable({isLoading = false }: OrgsTableProps) {
         sortBy={sortBy}
         setSortBy={setSortBy}
         onCreateClick={() => setCreateOpen(true)}
+        totalResults={totalOrgsCount}
       />
 
       {/* Main Table */}

@@ -33,7 +33,7 @@ export function PaginationFooter({
           variant="outline"
           size="sm"
           onClick={() => onPageChange(Math.min(currentPage + 1, totalPages))}
-          disabled={currentPage === totalPages}
+          disabled={currentPage >= totalPages}
           className="h-8 text-xs border-slate-200"
         >
           Next <ChevronRight className="h-3.5 w-3.5 ml-1" />

@@ -70,16 +70,18 @@ export async function fetchOrganizations(
       id: doc.id,
       name: d.name ?? "",
       shortName: d.shortName ?? "",
-      level: d.accessLevel,
+      level: d.accessLevel === 1 ? "department" : d.accessLevel === 2 ? "faculty" : "council",
       facultyId: facultyId,
       facultyName: faculty?.name ?? null,
       facultyAcronym: faculty?.acronym ?? null,
       programId: programId,
       programName: program?.name ?? null,
       programAcronym: program?.acronym ?? null,
-      isArchived: d.isArchived ?? d.isArchived ?? false,
+      isArchived: d.isArchived ?? false,
       subscribed: d.subscribed ?? false,
       subscriptionTier: (d.subscriptionTier ?? null) as SubscriptionTier | null,
+      orgLogoUrl: d.orgLogoUrl ?? null,
+
     };
   });
 }

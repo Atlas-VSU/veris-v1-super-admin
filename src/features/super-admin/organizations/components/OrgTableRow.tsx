@@ -35,10 +35,14 @@ export function OrgTableRow({
       {/* Logo/Name */}
       <TableCell className="py-3 pl-4">
         <div className="flex items-center gap-2.5">
-          <div className="flex items-center justify-center h-8 w-8 rounded-full bg-blue-100 text-blue-700 font-bold text-xs shrink-0 border border-blue-200">
-            {org.shortName
-              ? org.shortName.substring(0, 3).toUpperCase()
-              : org.name.substring(0, 2).toUpperCase()}
+          <div className="flex items-center justify-center h-8 w-8 rounded-full bg-blue-100 text-blue-700 font-bold text-xs shrink-0 border border-blue-200 overflow-hidden">
+            {org.orgLogoUrl ? (
+              <img src={org.orgLogoUrl} alt={org.name} className="h-full w-full object-cover" />
+            ) : (
+              org.shortName
+                ? org.shortName.substring(0, 3).toUpperCase()
+                : org.name.substring(0, 2).toUpperCase()
+            )}
           </div>
           <span className="text-sm font-semibold text-slate-800 truncate max-w-[200px]">
             {org.name}

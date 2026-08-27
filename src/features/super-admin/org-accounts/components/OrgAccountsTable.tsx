@@ -1,5 +1,7 @@
 "use client";
 
+import { useMemo } from "react";
+
 import {
   Table,
   TableBody,
@@ -8,28 +10,23 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
 import { StatusBadge } from "@/features/super-admin/shared/components/StatusBadge";
 import { OrgAccountDetailSheet } from "./OrgAccountDetailSheet";
 import { TableSkeleton } from "@/features/super-admin/shared/components/TableSkeleton";
 import type {
   SuperAdminOrgAccount,
   SuperAdminOrg,
+  OrgLevel,
 } from "@/features/super-admin/types";
-import { Users, Search, CheckCircle2, XCircle, MoreVertical, Edit2, Eye, Archive } from "lucide-react";
+import { Users, CheckCircle2, XCircle, MoreVertical, Edit2, Eye, Archive } from "lucide-react";
 import { format } from "date-fns";
 import { useOrgAccountsTable } from "../hooks/useOrgAccountsTable";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { EditAccountDialog } from "./EditAccountDialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { OrgAccountsFilterHeader } from "./OrgAccountsFilterHeader";
+import { PaginationFooter } from "@/features/super-admin/shared/components/PaginationFooter";
 
 interface OrgAccountsTableProps {
   accounts: SuperAdminOrgAccount[];
@@ -47,8 +44,16 @@ export function OrgAccountsTable({
     setActiveFilter,
     deletedFilter,
     setDeletedFilter,
+    levelFilter,
+    setLevelFilter,
+    facultyFilter,
+    setFacultyFilter,
     orgFilter,
     setOrgFilter,
+    sortBy,
+    setSortBy,
+    faculties,
+    filteredOrgs,
     search,
     setSearch,
     selectedAccount,
@@ -56,6 +61,10 @@ export function OrgAccountsTable({
     sheetOpen,
     setSheetOpen,
     filtered,
+    paginatedAccounts,
+    currentPage,
+    setCurrentPage,
+    totalPages,
     linkedOrg,
     handleRowClick,
     handleEditAccount,
@@ -65,6 +74,11 @@ export function OrgAccountsTable({
     setDeleteConfirmOpen,
     handleToggleDeleteSubmit
   } = useOrgAccountsTable(accounts, orgs);
+
+  const orgLogoMap = useMemo(
+    () => new Map(orgs.map((o) => [o.id, o.orgLogoUrl])),
+    [orgs]
+  );
 
   const onTriggerEdit = (account: SuperAdminOrgAccount | null) => {
     if (account) {
@@ -82,84 +96,26 @@ export function OrgAccountsTable({
 
   return (
     <>
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3 mb-4">
-        <div className="relative flex-1 min-w-[200px] max-w-sm">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-          <Input
-            placeholder="Search accounts..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-8 h-9 text-sm border-blue-100 focus-visible:ring-blue-300"
-          />
-        </div>
-
-        <Select
-          value={activeFilter}
-          onValueChange={(v) =>
-            setActiveFilter(v as typeof activeFilter)
-          }
-        >
-          <SelectTrigger className="w-[160px] h-9 text-sm border-blue-100">
-            <SelectValue placeholder="All Accounts" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Accounts</SelectItem>
-            <SelectItem value="active">Active Only</SelectItem>
-            <SelectItem value="inactive">Inactive Only</SelectItem>
-          </SelectContent>
-        </Select>
-
-        <Select
-          value={deletedFilter}
-          onValueChange={(v) =>
-            setDeletedFilter(v as typeof deletedFilter)
-          }
-        >
-          <SelectTrigger className="w-[160px] h-9 text-sm border-blue-100">
-            <SelectValue placeholder="All" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All</SelectItem>
-            <SelectItem value="notDeleted">Not Deleted</SelectItem>
-            <SelectItem value="deleted">Deleted Only</SelectItem>
-          </SelectContent>
-        </Select>
-
-        <Select
-          value={orgFilter}
-          onValueChange={(v) =>
-            setOrgFilter(v as typeof orgFilter)
-          }
-        >
-          <SelectTrigger className="w-[160px] h-9 text-sm border-blue-100">
-            <SelectValue placeholder="All Organizations" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Organizations</SelectItem>
-            {orgs.map((org) => (
-              <SelectItem key={org.id} value={org.id}>
-                {org.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        { (orgFilter != "all" || deletedFilter != "all" || activeFilter != "all" || search != "") && (
-          <Button variant={"ghost"} size={"sm"} onClick={() => {
-            setOrgFilter("all");
-            setDeletedFilter("all");
-            setActiveFilter("all");
-            setSearch("");
-          }}>
-            Clear Filters
-          </Button>
-        )}
-
-        <span className="text-xs text-slate-400 ml-auto whitespace-nowrap">
-          {filtered.length} result{filtered.length !== 1 ? "s" : ""}
-        </span>
-      </div>
+      {/* Filters Component */}
+      <OrgAccountsFilterHeader
+        search={search}
+        setSearch={setSearch}
+        activeFilter={activeFilter}
+        setActiveFilter={setActiveFilter}
+        deletedFilter={deletedFilter}
+        setDeletedFilter={setDeletedFilter}
+        levelFilter={levelFilter}
+        setLevelFilter={setLevelFilter}
+        facultyFilter={facultyFilter}
+        setFacultyFilter={setFacultyFilter}
+        orgFilter={orgFilter}
+        setOrgFilter={setOrgFilter}
+        sortBy={sortBy}
+        setSortBy={setSortBy}
+        faculties={faculties}
+        filteredOrgs={filteredOrgs}
+        totalResults={filtered.length}
+      />
 
       {/* Table */}
       <div className="rounded-lg border border-blue-50 overflow-hidden">
@@ -207,7 +163,7 @@ export function OrgAccountsTable({
             </TableBody>
           ) : (
             <TableBody>
-              {filtered.map((account) => (
+              {paginatedAccounts.map((account) => (
                 <TableRow
                   key={account.id}
                   className="cursor-pointer hover:bg-blue-50/50 transition-colors border-b border-slate-50 last:border-0"
@@ -215,10 +171,14 @@ export function OrgAccountsTable({
                 >
                   <TableCell className="py-3">
                     <div className="flex items-center gap-2">
-                      <div className="h-7 w-7 rounded-full bg-blue-50 flex items-center justify-center shrink-0">
-                        <span className="text-xs font-semibold text-blue-600">
-                          {account.firstName.charAt(0).toUpperCase()+account.lastName.charAt(0).toUpperCase()}
-                        </span>
+                      <div className="h-7 w-7 rounded-full bg-blue-50 flex items-center justify-center shrink-0 overflow-hidden border border-blue-100">
+                        {orgLogoMap.get(account.orgId) ? (
+                          <img src={orgLogoMap.get(account.orgId) || ""} alt={account.orgName || ""} className="h-full w-full object-cover" />
+                        ) : (
+                          <span className="text-xs font-semibold text-blue-600">
+                            {account.firstName.charAt(0).toUpperCase()+account.lastName.charAt(0).toUpperCase()}
+                          </span>
+                        )}
                       </div>
                       <span className="text-sm font-medium text-slate-800 truncate max-w-[160px]">
                         {account.firstName+" "+account.lastName}
@@ -288,6 +248,13 @@ export function OrgAccountsTable({
           )}
         </Table>
       </div>
+
+      {/* Pagination Footer */}
+      <PaginationFooter
+        currentPage={currentPage}
+        totalPages={totalPages}
+        onPageChange={setCurrentPage}
+      />
 
       {/* Detail Sheet */}
       <OrgAccountDetailSheet

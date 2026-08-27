@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import type { SuperAdminOrg, SuperAdminOrgAccount, OrgLevel, SubscriptionTier, SuperAdminFaculty, SuperAdminProgram } from "@/features/super-admin/types";
+import type { SuperAdminOrg, SuperAdminOrgAccount, OrgLevel, SubscriptionTier, SuperAdminFaculty, SuperAdminProgram, SortOption } from "@/features/super-admin/types";
 import { createOrganization, fetchOrganizationsPaginated, updateOrganization } from "@/firebase/organizations";
 import { getFaculties } from "@/firebase/faculties";
 import { getPrograms } from "@/firebase/programs";
@@ -8,6 +8,7 @@ import { Organization } from "@/constants/types";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import type { CreateOrgFormData, EditOrgFormData } from "../types/dialogs.types";
 import { batchUpdateAccounts, getAccountsByOrgId } from "@/firebase/accounts";
+import { revalidateOrgPages } from "@/app/actions/revalidate";
 
 
 interface useOrgsTableProps {
@@ -23,7 +24,7 @@ export function useOrgsTable({ itemsPerPage }: useOrgsTableProps) {
   const [levelFilter, setLevelFilter] = useState<OrgLevel | "all">("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive" | "archived">("all");
   const [tierFilter, setTierFilter] = useState<SubscriptionTier | "all">("all");
-  const [sortBy, setSortBy] = useState<"name-asc" | "name-desc" | "date-newest" | "date-oldest">("name-asc");
+  const [sortBy, setSortBy] = useState<SortOption>("date-newest");
   const [currentPage, setCurrentPage] = useState(1);
   const cursorRef = useRef<Record<number, any>>({});
   const [isLoading, setIsLoading] = useState(false);
@@ -35,6 +36,7 @@ export function useOrgsTable({ itemsPerPage }: useOrgsTableProps) {
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
   const [archiveTargetOrg, setArchiveTargetOrg] = useState<SuperAdminOrg | null>(null);
   const [totalOrgsCount, setTotalOrgsCount] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
 
   /**
    * Uploads a file via the server-side /api/upload route (Admin SDK).
@@ -78,7 +80,7 @@ export function useOrgsTable({ itemsPerPage }: useOrgsTableProps) {
         setIsLoading(true);
         const cursor = currentPage > 1 ? (cursorRef.current[currentPage - 2] ?? null) : null;
 
-        const { results: fetchedDocs, totalCount, lastVisible, accounts } = await fetchOrganizationsPaginated(
+        const { results: fetchedDocs, totalCount, lastVisible, accounts, hasMore: apiHasMore } = await fetchOrganizationsPaginated(
           itemsPerPage,
           cursor,
           search,
@@ -108,6 +110,7 @@ export function useOrgsTable({ itemsPerPage }: useOrgsTableProps) {
 
         setLocalOrgs(restructuredOrgs);
         setTotalOrgsCount(totalCount);
+        setHasMore(apiHasMore ?? (fetchedDocs.length === itemsPerPage));
         if (lastVisible) {
           cursorRef.current[currentPage - 1] = lastVisible;
         }
@@ -159,6 +162,7 @@ export function useOrgsTable({ itemsPerPage }: useOrgsTableProps) {
       };
 
       setLocalOrgs((prev) => [newOrg, ...prev]);
+      await revalidateOrgPages();
       toast.success(`Organization "${newOrg.name}" has been created!`);
     } catch (err) {
       toast.error(`Failed to create organization.${err}`);
@@ -221,6 +225,7 @@ export function useOrgsTable({ itemsPerPage }: useOrgsTableProps) {
         })
       );
       toast.success("Organization details updated successfully!");
+      await revalidateOrgPages();
     } catch (err) {
       toast.error("Failed to update organization.");
     }
@@ -261,6 +266,7 @@ export function useOrgsTable({ itemsPerPage }: useOrgsTableProps) {
       const actionText = nextArchiveState ? "archived" : "reactivated";
       toast.success(`Organization "${archiveTargetOrg.name}" has been ${actionText}.`);
       setArchiveConfirmOpen(false);
+      await revalidateOrgPages();
     } catch (err) {
       toast.error("Failed to update organization archive status.");
     }
@@ -304,7 +310,9 @@ export function useOrgsTable({ itemsPerPage }: useOrgsTableProps) {
   //   return result;
   // }, [localOrgs, search, levelFilter, statusFilter, tierFilter, sortBy]);
 
-  const totalPages = Math.ceil(totalOrgsCount / itemsPerPage);
+  const totalPages = hasMore
+    ? Math.max(currentPage + 1, Math.ceil(totalOrgsCount / itemsPerPage))
+    : currentPage;
   // const paginatedOrgs = useMemo(() => {
   //   const startIndex = (currentPage - 1) * itemsPerPage;
   //   return filteredAndSortedOrgs.slice(startIndex, startIndex + itemsPerPage);
@@ -344,5 +352,6 @@ export function useOrgsTable({ itemsPerPage }: useOrgsTableProps) {
     itemsPerPage,
     faculties,
     programs,
+    totalOrgsCount,
   };
 }

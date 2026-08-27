@@ -137,8 +137,12 @@ export function OrgSubscriptionsTable({
                   {/* Name & short_name */}
                   <TableCell className="py-3 pl-4">
                     <div className="flex items-center gap-2.5">
-                      <div className="h-7 w-7 rounded-md bg-blue-50 flex items-center justify-center shrink-0">
-                        <Building2 className="h-4 w-4 text-blue-500" />
+                      <div className="h-7 w-7 rounded-full bg-blue-50 flex items-center justify-center shrink-0 overflow-hidden border border-slate-100">
+                        {org.orgLogoUrl ? (
+                          <img src={org.orgLogoUrl} alt={org.name} className="h-full w-full object-cover" />
+                        ) : (
+                          <Building2 className="h-4 w-4 text-blue-500" />
+                        )}
                       </div>
                       <div>
                         <p className="text-sm font-semibold text-slate-800 leading-none mb-1">
