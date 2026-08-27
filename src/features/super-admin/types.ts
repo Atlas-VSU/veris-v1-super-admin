@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 export type OrgLevel = "department" | "faculty" | "council";
 export type SubscriptionTier = "basic" | "plus" | "premium";
+export type SortOption = "name-asc" | "name-desc" | "date-newest" | "date-oldest";
 
 export interface SuperAdminOrg {
   id: string;

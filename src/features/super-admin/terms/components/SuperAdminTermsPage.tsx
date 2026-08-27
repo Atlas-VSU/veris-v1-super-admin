@@ -19,6 +19,7 @@ import useSuperAdminActions from "../hooks/useSuperAdminActions";
 import { Term } from "@/constants/types";
 import { CreateNewTermDialog } from "./CreateNewTermDialog";
 import { PageHeader } from "@/features/super-admin/shared/components/PageHeader";
+import { PaginationFooter } from "@/features/super-admin/shared/components/PaginationFooter";
 
 export default function SuperAdminTermsPage({ orgs }: { orgs: SuperAdminOrg[] }) {
   const {
@@ -31,8 +32,16 @@ export default function SuperAdminTermsPage({ orgs }: { orgs: SuperAdminOrg[] })
     setTierFilter,
     statusFilter,
     setStatusFilter,
+    levelFilter,
+    setLevelFilter,
+    sortBy,
+    setSortBy,
     selectedTerm,
     filteredOrgs,
+    paginatedOrgs,
+    currentPage,
+    setCurrentPage,
+    totalPages,
     termStats,
     selectedOrg,
     setActiveTermOpen,
@@ -116,16 +125,27 @@ export default function SuperAdminTermsPage({ orgs }: { orgs: SuperAdminOrg[] })
           setTierFilter={setTierFilter}
           statusFilter={statusFilter}
           setStatusFilter={setStatusFilter}
+          levelFilter={levelFilter}
+          setLevelFilter={setLevelFilter}
+          sortBy={sortBy}
+          setSortBy={setSortBy}
           filteredCount={filteredOrgs.length}
         />
 
         {/* SUBSCRIPTIONS TABLE */}
         <OrgSubscriptionsTable
-          filteredOrgs={filteredOrgs}
+          filteredOrgs={paginatedOrgs}
           selectedTerm={selectedTerm}
           onOpenChangeTier={handleOpenChangeTier}
           onOpenRenew={handleOpenRenew}
           onOpenHistory={handleOpenHistory}
+        />
+
+        {/* Pagination Footer */}
+        <PaginationFooter
+          currentPage={currentPage}
+          totalPages={totalPages}
+          onPageChange={setCurrentPage}
         />
 
         {/* --- MODAL DIALOGS --- */}

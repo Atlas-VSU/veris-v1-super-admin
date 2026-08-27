@@ -14,3 +14,18 @@ export interface LoginState {
   password: string;
   error: string | null;
 }
+
+export type LoadingMessage =
+  | "Initiating super-admin access protocol..."
+  | "Aligning quantum encryption keys..."
+  | "Bypassing mainframe security (just kidding)..."
+  | "Reticulating premium splines..."
+  | "Establishing secure command center...";
+
+export const LOADING_MESSAGES: LoadingMessage[] = [
+  "Initiating super-admin access protocol...",
+  "Aligning quantum encryption keys...",
+  "Bypassing mainframe security (just kidding)...",
+  "Reticulating premium splines...",
+  "Establishing secure command center...",
+];

@@ -1,5 +1,5 @@
-import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SymmetricWave } from "@/components/ui/symmetric-wave";
 
 interface LoadingOverlayProps {
   loading: boolean;
@@ -21,8 +21,10 @@ export function LoadingOverlay({
         className
       )}
     >
-      <Loader2 className="h-8 w-8 animate-spin text-primary" strokeWidth={1.6} />
-      <p className="mt-3 text-sm text-ink-muted">{message}</p>
+      <div className="text-[#2563eb] dark:text-[#93c5fd] mb-3">
+        <SymmetricWave className="text-2xl" />
+      </div>
+      <p className="text-sm font-medium text-slate-500 dark:text-neutral-400">{message}</p>
     </div>
   );
 }

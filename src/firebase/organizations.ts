@@ -64,7 +64,7 @@ export const fetchOrganizationsPaginated = async (
   pageSize: number = 10,
   lastVisibleDoc: any = null,
   searchTerm: string = "",
-  sortBy: string = "name-asc",
+  sortBy: string = "date-newest",
   lvlFilter: string = "3",
   statFilter: string = "all",
   tierFilter: string = "all",
@@ -90,10 +90,10 @@ export const fetchOrganizationsPaginated = async (
     constraints.push(orderBy("name", "desc"));
   }
   if (sortBy === "date-newest") { 
-    constraints.push(orderBy("metadata.updatedAt", "desc"));
+    constraints.push(orderBy("metadata.createdAt", "desc"));
   }
   if (sortBy === "date-oldest") { 
-    constraints.push(orderBy("metadata.updatedAt", "asc"));
+    constraints.push(orderBy("metadata.createdAt", "asc"));
   }
   if (lvlFilter !== "all") {
     if (lvlFilter === "department") {
@@ -131,6 +131,7 @@ export const fetchOrganizationsPaginated = async (
 
   let results: any[] = [];
   let totalCount = 0;
+  let lastDoc: any = null;
   const rawSearch = searchTerm.trim();
   if (searchTerm && rawSearch !== "") {
 
@@ -148,10 +149,12 @@ export const fetchOrganizationsPaginated = async (
 
       const resultsMap = new Map();
 
-      nameSnap.forEach(doc => resultsMap.set(doc.id, { id: doc.id, ...doc.data() }));
-      shortNameSnap.forEach(doc => resultsMap.set(doc.id, { id: doc.id, ...doc.data() }));
-      results = Array.from(resultsMap.values());
+      nameSnap.forEach(doc => resultsMap.set(doc.id, doc));
+      shortNameSnap.forEach(doc => resultsMap.set(doc.id, doc));
+      const snaps = Array.from(resultsMap.values());
+      results = snaps.map(doc => ({ id: doc.id, ...doc.data() }));
       totalCount = results.length;
+      lastDoc = snaps.length > 0 ? snaps[snaps.length - 1] : null;
     } catch (error) {
       console.error("Error fetching organizations with search:", error);
       results = [];
@@ -167,6 +170,7 @@ export const fetchOrganizationsPaginated = async (
       ]);
       results = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       totalCount = countSnap.data().count;
+      lastDoc = snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null;
     } catch (error) {
       console.error("Error fetching organizations:", error);
       results = [];
@@ -186,7 +190,7 @@ export const fetchOrganizationsPaginated = async (
   return {
     results,
     totalCount,
-    lastVisible: results.length > 0 ? results[results.length - 1] : null,
+    lastVisible: lastDoc,
     accounts,
     hasMore: results.length === pageSize,
   }

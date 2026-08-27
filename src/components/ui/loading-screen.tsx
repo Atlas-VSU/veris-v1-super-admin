@@ -1,7 +1,8 @@
-import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
-import { FocLogo } from "@/components/veris/brand";
+import Image from "next/image";
+import { Settings } from "lucide-react";
+import { SymmetricWave } from "@/components/ui/symmetric-wave";
 
 interface LoadingScreenProps {
   message?: string;
@@ -9,9 +10,6 @@ interface LoadingScreenProps {
   showDelayMessage?: boolean;
 }
 
-// Generic-VERIS loading screen: calm warm-paper field with a faint rule grid,
-// a hairline-bordered card carrying the VERIS wordmark + gold dot, a cobalt
-// spinner, and a monospace status line.
 export function LoadingScreen({
   message = "Preparing your workspace…",
   className,
@@ -30,41 +28,42 @@ export function LoadingScreen({
   return (
     <div
       className={cn(
-        "fixed inset-0 z-[100] flex flex-col items-center justify-center bg-background",
+        "fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4",
         className
       )}
     >
-      {/* Faint rule grid underlay */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-50"
-        style={{
-          backgroundImage:
-            "linear-gradient(var(--rule) 1px, transparent 1px), linear-gradient(90deg, var(--rule) 1px, transparent 1px)",
-          backgroundSize: "48px 48px",
-          maskImage:
-            "radial-gradient(circle at center, black 0%, transparent 75%)",
-        }}
-      />
+      <div className="bg-white rounded-lg p-6 sm:p-8 lg:p-10 shadow-2xl max-w-sm sm:max-w-md w-full mx-auto text-center flex flex-col items-center">
 
-      <div className="relative mx-4 flex w-full max-w-sm flex-col items-center gap-6 rounded-[4px] border border-rule bg-card px-8 py-12 sm:mx-0 sm:w-auto sm:px-14">
-        {/* Faculty logo */}
-        <FocLogo size={52} className="size-13" priority />
-
-        {/* Wordmark */}
-        <div className="flex items-center gap-3">
-          <span className="font-mono text-sm font-medium tracking-[0.32em] text-ink">
-            VERIS
-          </span>
+        {/* Brand Logo & Name */}
+        <div className="flex flex-col items-center gap-4 mb-8">
+          <div className="relative inline-flex">
+            <div className="size-16 flex shrink-0 items-center justify-center overflow-hidden">
+              <Image
+                src="/images/veris-logo-superadmin.png"
+                alt="VERIS Logo"
+                width={64}
+                height={64}
+                className="object-contain w-full h-full"
+              />
+            </div>
+            <div className="absolute -top-1.5 -right-1.5 bg-white dark:bg-neutral-900 rounded-full">
+              <Settings className="size-4 text-[#2563eb] dark:text-[#93c5fd] shrink-0 animate-[spin_4s_linear_infinite]" />
+            </div>
+          </div>
         </div>
 
-        <Loader2 className="h-7 w-7 animate-spin text-primary" strokeWidth={1.6} />
+        {/* Loading Spinner */}
+        <div className="mb-6 text-[#2563eb] dark:text-[#93c5fd]">
+          <SymmetricWave className="text-xl" />
+        </div>
 
-        <div className="flex flex-col items-center gap-3">
-          <p className="text-center text-sm text-ink-muted">{message}</p>
+        <div className="flex flex-col items-center gap-2 min-h-[48px] justify-center transition-all duration-300 w-full">
+          <p className="text-sm sm:text-base text-slate-500 dark:text-neutral-400 text-center">
+            {message}
+          </p>
           {showDelayMessage && showDelayed && (
-            <p className="veris-eyebrow animate-fade-in text-center text-ink-muted">
-              Still working — hang tight
+            <p className="text-xs sm:text-sm animate-[pulse_2s_ease-in-out_infinite] text-slate-400 dark:text-neutral-500 font-medium">
+              Still working — hang tight...
             </p>
           )}
         </div>
