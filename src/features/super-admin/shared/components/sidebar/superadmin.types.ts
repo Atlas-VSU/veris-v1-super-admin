@@ -4,6 +4,7 @@ import {
   Users,
   Calendar,
   Archive,
+  RefreshCw,
 } from "lucide-react";
 
 export interface NavItem {
@@ -18,6 +19,7 @@ export const navItems: NavItem[] = [
   { label: "Terms Management", href: "/super-admin/terms", icon: Calendar },
   { label: "Organization Accounts", href: "/super-admin/org-accounts", icon: Users },
   { label: "Archive Students", href: "/super-admin/archive-students", icon: Archive },
+  { label: "Sync Roster", href: "/super-admin/roster-sync", icon: RefreshCw },
 ];
 
 export interface SidebarUser {

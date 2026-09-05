@@ -7,6 +7,7 @@ import {
   Calendar,
   LogOut,
   Archive,
+  RefreshCw,
 } from "lucide-react";
 export type OrgLevel = "department" | "faculty" | "council";
 export type SubscriptionTier = "basic" | "plus" | "premium";
@@ -147,6 +148,11 @@ export const superAdminData = {
       href: "/super-admin/archive-students",
     },
     {
+      label: "Sync Roster",
+      icon: "refresh-cw",
+      href: "/super-admin/roster-sync",
+    },
+    {
       label: "Logout",
       icon: "logout",
       href: "/",
@@ -163,6 +169,7 @@ export const mobileIconMap = {
   "calendar": Calendar,
   "logout": LogOut,
   "archive": Archive,
+  "refresh-cw": RefreshCw,
 };
 
 export interface PageHeaderProps {
