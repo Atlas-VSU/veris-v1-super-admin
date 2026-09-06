@@ -2,7 +2,10 @@
 import { FileText } from "lucide-react";
 import { PageHeader } from "@/features/super-admin/shared/components/PageHeader";
 
+import { useEffect } from "react";
 import { useRosterSync } from "../hooks/useRosterSync";
+import { useSyncHistory } from "../hooks/useSyncHistory";
+import SyncHistory from "./SyncHistory";
 import { StepBar } from "./StepBar";
 import { StepKey } from "../types";
 import UploadStep from "./UploadStep";
@@ -35,6 +38,19 @@ export default function RosterSyncPage() {
     handleCopyResult,
     handleDownloadResult,
   } = useRosterSync();
+
+  const {
+    entries: historyEntries,
+    isLoading: isHistoryLoading,
+    error: historyError,
+    refresh: refreshHistory,
+  } = useSyncHistory();
+
+  // A completed run is a new history entry — pull it in so the list the user
+  // returns to already reflects what they just did.
+  useEffect(() => {
+    if (step === "complete") refreshHistory();
+  }, [step, refreshHistory]);
 
   // Map internal step key to the progress bar key
   const barStep = step === "confirm" ? "preview" : step;
@@ -91,6 +107,19 @@ export default function RosterSyncPage() {
             )}
           </div>
         </div>
+
+        {/* ── Previous synchronizations ───────────────────────────────────── */}
+        {/* Shown while choosing a file, when "when did we last sync, and what
+            did it do?" is the question actually being asked. Hidden mid-run so
+            it does not compete with the step the user is working through. */}
+        {(step === "upload" || step === "complete") && (
+          <SyncHistory
+            entries={historyEntries}
+            isLoading={isHistoryLoading}
+            error={historyError}
+            onRefresh={refreshHistory}
+          />
+        )}
 
         {/* ── Info footer ─────────────────────────────────────────────────── */}
         {(step === "upload" || step === "validate") && (

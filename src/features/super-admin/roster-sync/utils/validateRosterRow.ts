@@ -44,6 +44,17 @@ export function validateRosterRow(raw: RawRosterRow): RosterRowValidation {
   const faculty   = validateField(raw.faculty, "faculty");
   if ("reason" in faculty) return { valid: false, reason: faculty.reason };
 
+  // Optional: registrar exports rarely carry addresses. A blank column is fine
+  // — one is derived from the Student ID — but a malformed address is not,
+  // since it would be written to the record and never deliver.
+  const email = (raw.email ?? "").toString().trim().toLowerCase();
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return { valid: false, reason: `Invalid email format: "${email}"` };
+  }
+  if (email.length > MAX_FIELD_LENGTH) {
+    return { valid: false, reason: `email exceeds ${MAX_FIELD_LENGTH} characters` };
+  }
+
   return {
     valid: true,
     row: {
@@ -53,6 +64,7 @@ export function validateRosterRow(raw: RawRosterRow): RosterRowValidation {
       yearLevel: yearLevel.value,
       program:   program.value,
       faculty:   faculty.value,
+      email,
     },
   };
 }

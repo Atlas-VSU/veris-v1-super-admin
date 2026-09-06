@@ -116,6 +116,25 @@ export default function PreviewStep({
         </div>
       )}
 
+      {preview.referenceWarnings.length > 0 && (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+          <p className="text-xs font-semibold text-slate-700 flex items-center gap-1 mb-1">
+            <AlertTriangle className="size-3.5" /> Faculty labels not recognised:{" "}
+            {preview.referenceWarnings.length}
+          </p>
+          <p className="text-[11px] text-slate-600 mb-2">
+            These rows were still applied — the faculty recorded against the student&apos;s
+            program was used instead. Worth checking whether the reference data is missing an
+            acronym for these faculties.
+          </p>
+          <div className="font-mono text-[11px] text-slate-700 max-h-24 overflow-y-auto space-y-0.5">
+            {preview.referenceWarnings.map((w) => (
+              <div key={w.studentId}>{w.studentId} — {w.reason}</div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {preview.toTransfer > 0 && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
           <p className="text-xs font-semibold text-amber-700 flex items-center gap-1 mb-1">
@@ -123,16 +142,10 @@ export default function PreviewStep({
             {preview.toTransfer}
           </p>
           <p className="text-[11px] text-amber-700 mb-2">
-            Their program or faculty changed, which moves them between organizations.{" "}
-            {preview.clearanceToCreate > 0 ? (
-              <>
-                <strong>{preview.clearanceToCreate}</strong> Clearance Status record(s) will be
-                created so they appear in their new organization for the active term. Existing
-                dues stay with the organization that issued them.
-              </>
-            ) : (
-              <>Existing dues stay with the organization that issued them.</>
-            )}
+            Their program or faculty changed, which moves them between organizations. Existing
+            dues stay with the organization that issued them. Their new organization will pick
+            them up in its own member and clearance lists — no clearance or fee records are
+            created here, since only the organization can decide what a student owes.
           </p>
           {preview.transferPreview.length > 0 && (
             <div className="font-mono text-[11px] text-amber-800 max-h-28 overflow-y-auto space-y-0.5">
@@ -183,6 +196,14 @@ export default function PreviewStep({
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
           <p className="text-xs font-semibold text-emerald-700 flex items-center gap-1 mb-1">
             New students to be created: {preview.toCreate}
+          </p>
+          <p className="text-[11px] text-emerald-700 mb-2">
+            Each will be given a Clearance Status record and their organization&apos;s existing
+            fees for the active term — the same provisioning an approved self-registration
+            receives.{" "}
+            <strong>{preview.clearanceToCreate}</strong> clearance record(s) and{" "}
+            <strong>{preview.feesToAssign}</strong> fee(s) will be created. A fee a student
+            already holds is never assigned twice.
           </p>
           {preview.createPreview.length > 0 && (
             <div className="font-mono text-[11px] text-emerald-700 max-h-28 overflow-y-auto space-y-0.5">

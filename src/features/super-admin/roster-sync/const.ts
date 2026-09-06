@@ -29,6 +29,17 @@ export const FIRESTORE_IN_QUERY_LIMIT = 30;
 // chunked only to bound the size of any single read.
 export const CLEARANCE_READ_CHUNK = 200;
 
+// Domain used to derive an address for a student the roster gives no email for.
+// The roster is a registrar export and rarely carries addresses, but a student
+// with no email cannot be contacted or later given a login, so one is always
+// derived from the Student ID. Production uses the institutional domain; every
+// other environment uses an obviously fake one, so a non-production run can
+// never send mail to a real student. FEE_EMAIL_DOMAIN overrides both, since
+// "production" is not always what NODE_ENV says it is.
+export const DERIVED_EMAIL_DOMAIN =
+  process.env.ROSTER_EMAIL_DOMAIN ||
+  (process.env.NODE_ENV === "production" ? "vsu.edu.ph" : "dummy.edu.ph");
+
 // Share of the active student body that may be deactivated in one run before
 // the sync refuses without explicit acknowledgement. A genuine cohort leaving
 // is a small fraction; a third of the university disappearing is the signature
@@ -39,7 +50,14 @@ export const MAX_DEACTIVATION_RATIO = 0.25;
 // tiny dataset would otherwise trip the guard constantly.
 export const MIN_DEACTIVATIONS_FOR_RATIO_CHECK = 25;
 
-export type RosterColumn = "studentId" | "firstName" | "lastName" | "yearLevel" | "program" | "faculty";
+export type RosterColumn =
+  | "studentId"
+  | "firstName"
+  | "lastName"
+  | "yearLevel"
+  | "program"
+  | "faculty"
+  | "email";
 
 // Recognised CSV/XLSX header aliases, normalised to lowercase with
 // whitespace/underscores/hyphens collapsed to single spaces before lookup.
@@ -73,4 +91,8 @@ export const HEADER_ALIASES: Record<string, RosterColumn> = {
   "faculty name": "faculty",
   "college": "faculty",
   "department": "faculty",
+
+  "email": "email",
+  "email address": "email",
+  "e mail": "email",
 };

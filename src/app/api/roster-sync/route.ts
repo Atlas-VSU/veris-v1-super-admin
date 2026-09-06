@@ -58,11 +58,10 @@
  * cannot be exempted — the client blocks on those instead of submitting them.
  *
  * A student whose programId/facultyId changes is reported separately as a
- * TRANSFER, and — together with newly created students — is given a Clearance
- * Status record for each matching subscribed organization for the active term,
- * mirroring what the org app creates when it approves a self-registration.
- * Existing clearance records are never overwritten, so re-running a roster
- * neither duplicates nor resets them.
+ * TRANSFER. Writing those IDs is all a transfer requires — the org app resolves
+ * membership by querying them — so no clearance or fee record is created here.
+ * See the note above `fetchMatchingTermRecordIds` for why creating clearance
+ * from this endpoint is actively harmful.
  *
  * BATCH LIMIT: Firestore max 500 ops/batch — chunked at 499 to be safe.
  * All writes (creates, updates, deactivations, and term-record deletes) are
@@ -76,14 +75,23 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { adminAuth, adminDb } from "@/firebase/firebase-admin.config";
-import type { WriteBatch } from "firebase-admin/firestore";
+import { FieldValue, type WriteBatch } from "firebase-admin/firestore";
 import {
   BATCH_LIMIT,
   CLEARANCE_READ_CHUNK,
+  DERIVED_EMAIL_DOMAIN,
   FIRESTORE_IN_QUERY_LIMIT,
   MAX_ROSTER_ROWS,
   STUDENT_ID_RE,
 } from "@/features/super-admin/roster-sync/const";
+import {
+  planProvisions,
+  clearanceStatusFor,
+  buildClearanceId,
+  studentBelongsToOrg,
+  type FeeItemRef,
+  type OrgRef,
+} from "@/features/super-admin/roster-sync/utils/provisionPlan";
 import {
   deactivationRatio,
   exceedsDeactivationThreshold,
@@ -104,7 +112,10 @@ import type { ActiveTerm, RawRosterRow, RosterRow } from "@/features/super-admin
 
 async function requireSuperAdmin(
   req: NextRequest
-): Promise<{ ok: true; uid: string } | { ok: false; status: number; error: string }> {
+): Promise<
+  | { ok: true; uid: string; actorName: string }
+  | { ok: false; status: number; error: string }
+> {
   const sessionCookie = req.cookies.get("session")?.value;
   if (!sessionCookie) {
     return { ok: false, status: 401, error: "Not authenticated." };
@@ -121,9 +132,69 @@ async function requireSuperAdmin(
       return { ok: false, status: 403, error: "Forbidden. Super-admin role required." };
     }
 
-    return { ok: true, uid: decoded.uid };
+    // Captured for the synchronization log — an audit entry naming only a uid
+    // is far less useful months later than one naming a person.
+    const actorName =
+      `${String(data?.firstName ?? "").trim()} ${String(data?.lastName ?? "").trim()}`.trim() ||
+      String(data?.email ?? "").trim() ||
+      decoded.uid;
+
+    return { ok: true, uid: decoded.uid, actorName };
   } catch {
     return { ok: false, status: 401, error: "Invalid or expired session." };
+  }
+}
+
+// ── Synchronization history ──────────────────────────────────────────────────
+
+/** Collection holding one document per executed synchronization. Dry runs are
+ *  never recorded — they change nothing, so they are not part of the history. */
+const SYNC_LOG_COLLECTION = "rosterSyncLogs";
+
+/** How many past runs the history endpoint returns. */
+const SYNC_LOG_PAGE_SIZE = 20;
+
+/**
+ * Records a completed run.
+ *
+ * Written after the batches are committed, and deliberately outside the batch:
+ * a partial failure still produced real changes, so the history must record
+ * what happened rather than disappearing with the transaction. A failure to
+ * write the log is swallowed — losing the audit entry is bad, but failing the
+ * response after the data has already changed would be worse and would invite
+ * an operator to re-run a sync that already succeeded.
+ */
+async function recordSyncRun(entry: Record<string, unknown>): Promise<void> {
+  try {
+    await adminDb.collection(SYNC_LOG_COLLECTION).add(entry);
+  } catch (error) {
+    console.error("[roster-sync API] failed to write synchronization log", error);
+  }
+}
+
+/** Recent synchronization history, newest first. */
+export async function GET(req: NextRequest) {
+  const auth = await requireSuperAdmin(req);
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.error }, { status: auth.status });
+  }
+
+  try {
+    const snap = await adminDb
+      .collection(SYNC_LOG_COLLECTION)
+      .orderBy("completedAt", "desc")
+      .limit(SYNC_LOG_PAGE_SIZE)
+      .get();
+
+    return NextResponse.json({
+      entries: snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
+    });
+  } catch (error: any) {
+    console.error("[roster-sync API] history read failed", error);
+    return NextResponse.json(
+      { error: "Failed to load synchronization history.", detail: error?.message },
+      { status: 500 }
+    );
   }
 }
 
@@ -215,8 +286,9 @@ function validateRequestBody(
 
 // ── Firestore helpers ─────────────────────────────────────────────────────────
 
-/** Two stored records whose studentIds normalize to the same value — the
- *  database cannot say which one the roster row refers to. */
+/** Two *live* records whose studentIds normalize to the same value — the
+ *  database cannot say which one the roster row refers to. An archived record
+ *  alongside a live one is not a collision: see `fetchExistingRoster`. */
 export interface StudentIdCollision {
   studentId: string;
   docIds:    string[];
@@ -235,10 +307,23 @@ export interface StudentIdCollision {
  * document for that student AND treated the original as departed, archiving
  * their records. Normalizing both sides closes that path.
  *
- * Where two stored records collapse to the same normalized id, the database is
- * genuinely ambiguous: silently keeping one would leave the other unmatched
- * and therefore treated as departed. These are reported so the caller can
- * refuse to run rather than guess.
+ * ARCHIVED PREDECESSORS ARE NOT COLLISIONS. A student can legitimately hold
+ * the same Student ID twice: they graduate, their record is archived, and the
+ * registrar re-enrols them under the same ID in a new program. The org app
+ * creates a fresh record because its duplicate guard filters on
+ * `isDeleted == false`, so the archived one is invisible to it — by design.
+ *
+ * Only two *live* records for one ID are genuinely ambiguous. Those are
+ * reported so the caller can refuse to run rather than guess. An archived
+ * predecessor alongside a live record is unambiguous: the live one is current,
+ * and it is the one matched. Counting archived records here would block a sync
+ * over ordinary graduate re-enrolment.
+ *
+ * The live record also always wins the map. Document order is arbitrary, so
+ * letting the last write win could seat the *archived* record as the match —
+ * `diffRoster` would then see `isDeleted: true`, mark it reactivated, and the
+ * sync would revive the graduate's old record while leaving the student's real
+ * one untouched.
  */
 async function fetchExistingRoster(): Promise<{
   map: Map<string, ExistingStudent>;
@@ -246,15 +331,22 @@ async function fetchExistingRoster(): Promise<{
 }> {
   const snap = await adminDb.collection("users").where("studentId", "!=", "").get();
   const map = new Map<string, ExistingStudent>();
-  const seenDocIds = new Map<string, string[]>();
+  const liveDocIds = new Map<string, string[]>();
 
   snap.docs.forEach((doc) => {
     const d = doc.data();
     const raw = String(d.studentId ?? "").trim();
     if (!raw) return;
     const studentId = normaliseStudentId(raw);
+    const isDeleted = d.isDeleted === true;
 
-    seenDocIds.set(studentId, [...(seenDocIds.get(studentId) ?? []), doc.id]);
+    if (!isDeleted) {
+      liveDocIds.set(studentId, [...(liveDocIds.get(studentId) ?? []), doc.id]);
+    }
+
+    // A live record always displaces an archived one; never the reverse.
+    const seated = map.get(studentId);
+    if (seated && !seated.isDeleted && isDeleted) return;
 
     map.set(studentId, {
       docId: doc.id,
@@ -266,12 +358,12 @@ async function fetchExistingRoster(): Promise<{
       faculty: String(d.faculty ?? ""),
       programId: String(d.programId ?? ""),
       facultyId: String(d.facultyId ?? ""),
-      isDeleted: d.isDeleted === true,
+      isDeleted,
     });
   });
 
   const collisions: StudentIdCollision[] = [];
-  for (const [studentId, docIds] of seenDocIds) {
+  for (const [studentId, docIds] of liveDocIds) {
     if (docIds.length > 1) collisions.push({ studentId, docIds });
   }
 
@@ -312,15 +404,52 @@ async function fetchReferenceData(): Promise<RosterReferenceData> {
   return { programs, faculties };
 }
 
-/** One organization, as needed to decide clearance membership. */
-interface OrgRef {
-  id:          string;
-  programId:   string | null;
-  facultyId:   string | null;
-  accessLevel: number;
+/*
+ * PROVISIONING NEW STUDENTS
+ *
+ * A newly created student is given, for each subscribed organization they
+ * belong to, the same things the org app gives a self-registration it approves:
+ * a clearance record AND that organization's existing fees for the active term.
+ *
+ * The two must happen together. An earlier revision created clearance alone,
+ * which was silently harmful: the org app writes clearance and *immediately*
+ * assigns fees, so blockingItems are populated and the status is recalculated.
+ * A clearance record with no fees reads as "cleared" while the student owes
+ * money — and because the org app's bulk clearance generator skips anyone who
+ * already has a record for the term, that empty record permanently prevented
+ * the correct one from ever being generated.
+ *
+ * Fees are never duplicated: a fee is only written when the student does not
+ * already hold one for that same fee template, so re-running a roster, or
+ * recovering from a partially failed one, cannot charge anybody twice.
+ *
+ * Only newly CREATED students are provisioned. A transfer moves an existing
+ * student between organizations, and what they then owe their new organization
+ * — and whether they still owe the old one — is a decision for that
+ * organization, not a side effect of a roster upload.
+ */
+
+/**
+ * Due date stamped on a newly created clearance record. Mirrors the constant
+ * the org app uses when it approves a self-registration, so a student
+ * provisioned here is not given a different deadline from one provisioned
+ * there. (The org app's bulk generator uses a *different* hardcoded date —
+ * an inconsistency in that codebase, not one to propagate.)
+ */
+const CLEARANCE_DEFAULT_DUE_DATE = new Date("2026-12-30");
+
+/**
+ * Address for a student the roster gives no email for.
+ *
+ * A student with no address cannot be contacted or later issued a login, so one
+ * is always derived. Outside production the domain is deliberately fake, so a
+ * test run can never deliver mail to a real student.
+ */
+function derivedEmailFor(studentId: string): string {
+  return `${studentId}@${DERIVED_EMAIL_DOMAIN}`.toLowerCase();
 }
 
-/** Subscribed organizations only — an unsubscribed org does not track clearance. */
+/** Loads subscribed organizations. Unsubscribed orgs track no clearance. */
 async function fetchSubscribedOrgs(): Promise<OrgRef[]> {
   const snap = await adminDb.collection("organizations").get();
   return snap.docs
@@ -336,86 +465,96 @@ async function fetchSubscribedOrgs(): Promise<OrgRef[]> {
     });
 }
 
-/**
- * Whether a student belongs to an organization.
- *
- * Mirrors the org app's self-registration approval rule — program-level orgs
- * match on programId, faculty-level orgs on facultyId, and an org scoped to
- * neither is university-wide. The org app's own version of this condition has
- * its `&&`/`||` unparenthesized, so an *unsubscribed* org can match on
- * faculty; that is not reproduced here, since `fetchSubscribedOrgs` has
- * already excluded unsubscribed orgs.
- */
-function studentBelongsToOrg(org: OrgRef, programId: string, facultyId: string): boolean {
-  if (org.programId) return org.programId === programId;
-  if (org.facultyId) return org.facultyId === facultyId;
-  return true;
-}
-
-/** Deterministic clearance document ID — identical to the org app's
- *  `buildClearanceId`, so both apps address the same record. */
-function buildClearanceId(
-  userId: string,
-  orgId: string,
-  term: { AY: string; semester: string }
-): string {
-  return `${userId}${orgId}${`:${term.AY}-${term.semester}`.replace(/\s/g, "_")}`;
-}
-
-/** Mirrors the default the org app stamps on newly created clearance records. */
-const CLEARANCE_DEFAULT_DUE_DATE = new Date("2026-12-30");
-
-interface PendingClearance {
-  id:        string;
-  orgId:     string;
-  userId:    string;
-  userName:  string;
-  studentId: string;
-}
-
-/**
- * Builds the clearance records needed so newly created and transferred
- * students appear in their organization for the active term.
- *
- * Records that already exist are skipped rather than overwritten — a clearance
- * doc carries live status and blocking items, and re-running a roster must
- * never reset them.
- */
-async function planClearanceCreations(
-  students: { userId: string; studentId: string; userName: string; programId: string; facultyId: string }[],
-  orgs: OrgRef[],
+/** Fee templates per organization for the active term, non-archived only. */
+async function fetchFeeItemsByOrg(
+  orgIds: string[],
   term: ActiveTerm
-): Promise<PendingClearance[]> {
-  const candidates: PendingClearance[] = [];
+): Promise<Map<string, FeeItemRef[]>> {
+  const byOrg = new Map<string, FeeItemRef[]>();
 
-  for (const student of students) {
-    for (const org of orgs) {
-      if (!studentBelongsToOrg(org, student.programId, student.facultyId)) continue;
-      candidates.push({
-        id: buildClearanceId(student.userId, org.id, term),
-        orgId: org.id,
-        userId: student.userId,
-        userName: student.userName,
-        studentId: student.studentId,
-      });
-    }
+  for (const orgId of orgIds) {
+    const snap = await adminDb
+      .collection("feeItems")
+      .where("orgId", "==", orgId)
+      .where("isArchived", "==", false)
+      .where("academicYear", "==", term.AY)
+      .where("semester", "==", term.semester)
+      .get();
+
+    if (snap.empty) continue;
+
+    byOrg.set(
+      orgId,
+      snap.docs.map((doc) => {
+        const d = doc.data();
+        return {
+          id: doc.id,
+          orgId,
+          title: String(d.title ?? ""),
+          feeType: String(d.feeType ?? ""),
+          amount: Number(d.amount ?? 0),
+          description: String(d.description ?? ""),
+          eventId: (d.eventId as string) ?? null,
+          dueDate: d.dueDate ?? null,
+          isRequiredForClearance: d.isRequiredForClearance === true,
+          academicYear: String(d.academicYear ?? term.AY),
+          semester: String(d.semester ?? term.semester),
+        };
+      })
+    );
   }
 
-  if (candidates.length === 0) return [];
+  return byOrg;
+}
 
-  // Skip any that already exist, read in chunks to bound each getAll call.
-  const pending: PendingClearance[] = [];
-  for (let i = 0; i < candidates.length; i += CLEARANCE_READ_CHUNK) {
-    const chunk = candidates.slice(i, i + CLEARANCE_READ_CHUNK);
-    const snaps = await adminDb.getAll(
-      ...chunk.map((c) => adminDb.collection("clearanceStatus").doc(c.id))
-    );
-    snaps.forEach((snap, index) => {
-      if (!snap.exists) pending.push(chunk[index]);
+/**
+ * Which fee templates each student already holds, so none is written twice.
+ *
+ * Keyed by `userId` rather than `studentId`: a duplicated student would
+ * otherwise pool both records' fees together and suppress a legitimate charge.
+ */
+async function fetchExistingFeeItemIds(
+  userIds: string[],
+  term: ActiveTerm
+): Promise<Map<string, Set<string>>> {
+  const held = new Map<string, Set<string>>();
+
+  for (let i = 0; i < userIds.length; i += FIRESTORE_IN_QUERY_LIMIT) {
+    const chunk = userIds.slice(i, i + FIRESTORE_IN_QUERY_LIMIT);
+    const snap = await adminDb
+      .collection("fees")
+      .where("userId", "in", chunk)
+      .where("academicYear", "==", term.AY)
+      .where("semester", "==", term.semester)
+      .get();
+
+    snap.docs.forEach((doc) => {
+      const d = doc.data();
+      const userId = String(d.userId ?? "");
+      const feeItemId = String(d.feeItemId ?? "");
+      if (!userId || !feeItemId) return;
+      held.set(userId, (held.get(userId) ?? new Set<string>()).add(feeItemId));
     });
   }
 
-  return pending;
+  return held;
+}
+
+/** Which of the candidate clearance records already exist. */
+async function fetchExistingClearanceIds(ids: string[]): Promise<Set<string>> {
+  const existing = new Set<string>();
+
+  for (let i = 0; i < ids.length; i += CLEARANCE_READ_CHUNK) {
+    const chunk = ids.slice(i, i + CLEARANCE_READ_CHUNK);
+    const snaps = await adminDb.getAll(
+      ...chunk.map((id) => adminDb.collection("clearanceStatus").doc(id))
+    );
+    snaps.forEach((snap) => {
+      if (snap.exists) existing.add(snap.id);
+    });
+  }
+
+  return existing;
 }
 
 /** Mirrors `/api/archive-students`' active-term lookup exactly. */
@@ -543,12 +682,13 @@ export async function POST(req: NextRequest) {
   const { rows, dryRun, excludedStudentIds, additiveOnly, acknowledgeMassDeactivation } = validated;
 
   try {
-    const [{ map: existing, collisions }, activeTerm, reference, subscribedOrgs] = await Promise.all([
-      fetchExistingRoster(),
-      getActiveTerm(),
-      fetchReferenceData(),
-      fetchSubscribedOrgs(),
-    ]);
+    const [{ map: existing, collisions }, activeTerm, reference, subscribedOrgs] =
+      await Promise.all([
+        fetchExistingRoster(),
+        getActiveTerm(),
+        fetchReferenceData(),
+        fetchSubscribedOrgs(),
+      ]);
 
     // Ambiguous identity is never resolved by guessing: whichever record lost
     // the collision would be seen as departed and have its records archived.
@@ -556,8 +696,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           error:
-            "Duplicate student records detected. Two or more accounts share the same Student ID, " +
-            "so the roster cannot be matched unambiguously. Resolve these before synchronizing.",
+            "Duplicate student records detected. Two or more ACTIVE accounts share the same " +
+            "Student ID, so the roster cannot be matched unambiguously. Resolve these before " +
+            "synchronizing. (An archived record from a previous enrolment is not counted here.)",
           details: collisions
             .slice(0, 50)
             .map((c) => `${c.studentId}: ${c.docIds.length} records (${c.docIds.join(", ")})`),
@@ -610,30 +751,6 @@ export async function POST(req: NextRequest) {
     }
     const transfers: UpdateOp[] = plan.toUpdate.filter((op) => op.transferred);
 
-    // Newly created students and transferred students both need clearance
-    // records for whichever organizations they now belong to. A create's
-    // document ID is its studentId (see the create op below).
-    const clearanceSubjects = [
-      ...plan.toCreate.map(({ row }) => ({
-        userId: row.studentId,
-        studentId: row.studentId,
-        userName: `${row.firstName} ${row.lastName}`.trim(),
-        programId: row.programId,
-        facultyId: row.facultyId,
-      })),
-      ...transfers.map((op) => ({
-        userId: op.docId,
-        studentId: op.studentId,
-        userName: `${op.firstName} ${op.lastName}`.trim(),
-        programId: op.programId,
-        facultyId: op.facultyId,
-      })),
-    ];
-
-    const pendingClearance = activeTerm
-      ? await planClearanceCreations(clearanceSubjects, subscribedOrgs, activeTerm)
-      : [];
-
     // Term-scoped cleanup only applies to students being deactivated this run
     // — mirrors archive-students, whose fee/fine/clearance cleanup applies to
     // the same set of students it archives.
@@ -644,6 +761,51 @@ export async function POST(req: NextRequest) {
           fetchMatchingTermRecordIds("clearanceStatus", deactivateStudentIds, activeTerm.AY, activeTerm.semester),
         ])
       : [[], [], []];
+
+    // ── Provisioning for newly created students ───────────────────────────
+    // A create's document ID is its studentId (see the create op below), so a
+    // student can be provisioned in the same run that creates them.
+    const provisionSubjects = plan.toCreate.map(({ row }) => ({
+      userId: row.studentId,
+      studentId: row.studentId,
+      userName: `${row.firstName} ${row.lastName}`.trim(),
+      programId: row.programId,
+      facultyId: row.facultyId,
+    }));
+
+    let provisions: ReturnType<typeof planProvisions> = [];
+    if (activeTerm && provisionSubjects.length > 0 && subscribedOrgs.length > 0) {
+      const relevantOrgIds = subscribedOrgs.map((o) => o.id);
+      const feeItemsByOrg = await fetchFeeItemsByOrg(relevantOrgIds, activeTerm);
+
+      // Both lookups guard against writing something the student already has:
+      // fees they already hold, and clearance records already in place.
+      const [heldFeeItemIds, existingClearanceIds] = await Promise.all([
+        fetchExistingFeeItemIds(
+          provisionSubjects.map((s) => s.userId),
+          activeTerm
+        ),
+        fetchExistingClearanceIds(
+          provisionSubjects.flatMap((s) =>
+            subscribedOrgs
+              .filter((o) => studentBelongsToOrg(o, s.programId, s.facultyId))
+              .map((o) => buildClearanceId(s.userId, o.id, activeTerm))
+          )
+        ),
+      ]);
+
+      provisions = planProvisions(
+        provisionSubjects,
+        subscribedOrgs,
+        feeItemsByOrg,
+        heldFeeItemIds,
+        existingClearanceIds,
+        activeTerm
+      );
+    }
+
+    const clearanceToCreate = provisions.filter((p) => !p.clearanceExists).length;
+    const feesToAssign = provisions.reduce((n, p) => n + p.fees.length, 0);
 
     if (dryRun) {
       return NextResponse.json({
@@ -659,7 +821,10 @@ export async function POST(req: NextRequest) {
         additiveOnly,
         massDeactivation,
         activeStudentCount,
+        clearanceToCreate,
+        feesToAssign,
         unresolvedRows: resolution.unresolvable.slice(0, 500),
+        referenceWarnings: resolution.warnings.slice(0, 500),
         createPreview: plan.toCreate.slice(0, 500).map((op) => ({ studentId: op.row.studentId, fullName: `${op.row.firstName} ${op.row.lastName}`.trim() })),
         updatePreview: plan.toUpdate.slice(0, 500).map((op) => ({ studentId: op.studentId, fullName: `${op.firstName} ${op.lastName}`.trim(), reactivated: op.reactivated })),
         transferPreview: transfers.slice(0, 500).map((op) => ({
@@ -672,7 +837,6 @@ export async function POST(req: NextRequest) {
         matchingFees: feeIds.length,
         matchingFines: fineIds.length,
         matchingClearance: clearanceIds.length,
-        clearanceToCreate: pendingClearance.length,
       });
     }
 
@@ -696,6 +860,14 @@ export async function POST(req: NextRequest) {
           // "user" — not "student": every organization member query filters on
           // role === "user", so any other value hides the student entirely.
           role: "user",
+          // Same trap as role: the member lists, fine generation, clearance
+          // generation and dashboard counts all filter status == "approved",
+          // and a document MISSING the field matches no equality filter. Left
+          // unset, a created student is invisible to the whole org app.
+          // A registrar roster is authoritative, so "approved" is correct here
+          // and matches what bulk import writes.
+          status: "approved",
+          email: row.email || derivedEmailFor(row.studentId),
           isActive: true,
           isDeleted: false,
           metadata: { createdAt: now, updatedAt: now },
@@ -703,6 +875,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Note the absence of `email` and `status`: an update must never overwrite
+    // them. A student who self-registered has a verified address of their own,
+    // and clobbering it with one derived from their Student ID would send their
+    // login and update links to a mailbox they may not read.
     for (const update of plan.toUpdate) {
       ops.push((batch) =>
         batch.update(usersCol.doc(update.docId), {
@@ -715,6 +891,111 @@ export async function POST(req: NextRequest) {
           facultyId: update.facultyId,
           isDeleted: false,
           "metadata.updatedAt": now,
+        })
+      );
+    }
+
+    // ── Clearance and fees for newly created students ─────────────────────
+    // Written together: a clearance record whose blockingItems were never
+    // populated reads as a cleared student who in fact owes money, and it
+    // permanently blocks the org app from generating the correct one.
+    const feeItemAssignments = new Map<string, number>();
+
+    for (const provision of provisions) {
+      const { subject, orgId, clearanceId, clearanceExists, fees } = provision;
+      const blockingItems: Record<string, unknown> = {};
+
+      for (const { feeItem } of fees) {
+        const feeRef = adminDb.collection("fees").doc();
+
+        ops.push((batch) =>
+          batch.create(feeRef, {
+            orgId,
+            userId: subject.userId,
+            userName: subject.userName,
+            studentId: subject.studentId,
+            feeItemId: feeItem.id,
+            feeType: feeItem.feeType,
+            title: feeItem.title,
+            amount: feeItem.amount,
+            paidAmount: 0,
+            balance: feeItem.amount,
+            status: "unpaid",
+            academicYear: feeItem.academicYear,
+            semester: feeItem.semester,
+            description: feeItem.description,
+            eventId: feeItem.eventId,
+            dueDate: feeItem.dueDate ?? null,
+            isRequiredForClearance: feeItem.isRequiredForClearance,
+            createdBy: orgId,
+            createdAt: now,
+            updatedAt: now,
+            isArchived: false,
+          })
+        );
+
+        if (feeItem.isRequiredForClearance) {
+          blockingItems[feeRef.id] = {
+            type: "fees",
+            referenceId: feeRef.id,
+            title: feeItem.title,
+            balance: feeItem.amount,
+            status: "unpaid",
+            paymentHistory: [],
+            pendingReview: false,
+            isRequiredForClearance: true,
+            academicYear: feeItem.academicYear,
+            semester: feeItem.semester,
+          };
+        }
+
+        feeItemAssignments.set(feeItem.id, (feeItemAssignments.get(feeItem.id) ?? 0) + 1);
+      }
+
+      const clearanceRef = adminDb.collection("clearanceStatus").doc(clearanceId);
+
+      if (clearanceExists) {
+        // Merge only — an existing record carries live status and blocking
+        // items that a re-run must not reset.
+        if (Object.keys(blockingItems).length > 0) {
+          ops.push((batch) =>
+            batch.set(clearanceRef, { blockingItems, updatedAt: now }, { merge: true })
+          );
+        }
+      } else {
+        ops.push((batch) =>
+          batch.create(clearanceRef, {
+            id: clearanceId,
+            orgId,
+            userId: subject.userId,
+            userName: subject.userName,
+            studentId: subject.studentId,
+            academicYear: activeTerm!.AY,
+            semester: activeTerm!.semester,
+            status: clearanceStatusFor(fees),
+            visibility: "public",
+            blockingItems,
+            clearanceDate: null,
+            lastCalculatedAt: now,
+            startDate: now,
+            dueDate: CLEARANCE_DEFAULT_DUE_DATE,
+            createdAt: now,
+            updatedAt: now,
+            isArchived: false,
+          })
+        );
+      }
+    }
+
+    // One increment per template, not one per student: the org app increments
+    // `totalStudents` per assignment, which is fine for a single approval but
+    // would mean thousands of writes to the same document here — far past
+    // Firestore's sustained per-document write limit.
+    for (const [feeItemId, count] of feeItemAssignments) {
+      ops.push((batch) =>
+        batch.update(adminDb.collection("feeItems").doc(feeItemId), {
+          totalStudents: FieldValue.increment(count),
+          updatedAt: now,
         })
       );
     }
@@ -742,34 +1023,6 @@ export async function POST(req: NextRequest) {
       ops.push((batch) => queueArchive(batch, "clearanceStatus", id, now));
     }
 
-    // Clearance for students entering an organization. `create` (not `set`)
-    // so a record that appeared between the existence probe and the commit is
-    // never silently overwritten — the batch fails loudly instead, and
-    // re-running skips whatever already landed.
-    for (const clearance of pendingClearance) {
-      ops.push((batch) =>
-        batch.create(adminDb.collection("clearanceStatus").doc(clearance.id), {
-          id: clearance.id,
-          orgId: clearance.orgId,
-          userId: clearance.userId,
-          userName: clearance.userName,
-          studentId: clearance.studentId,
-          academicYear: activeTerm!.AY,
-          semester: activeTerm!.semester,
-          status: "cleared",
-          visibility: "public",
-          blockingItems: {},
-          clearanceDate: null,
-          lastCalculatedAt: now,
-          startDate: now,
-          dueDate: CLEARANCE_DEFAULT_DUE_DATE,
-          createdAt: now,
-          updatedAt: now,
-          isArchived: false,
-        })
-      );
-    }
-
     const batches = chunkArray(ops, BATCH_LIMIT).map((chunk) => {
       const batch = adminDb.batch();
       chunk.forEach((apply) => apply(batch));
@@ -788,8 +1041,9 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    console.log("[roster-sync API] sync executed", {
-      actingUid: auth.uid,
+    const completedAt = new Date();
+
+    const summary = {
       rosterRowsSubmitted: rows.length,
       toCreate: plan.toCreate.length,
       toUpdate: plan.toUpdate.length,
@@ -801,8 +1055,25 @@ export async function POST(req: NextRequest) {
       feesArchived: feeIds.length,
       finesArchived: fineIds.length,
       clearanceArchived: clearanceIds.length,
-      clearanceCreated: pendingClearance.length,
+      clearanceCreated: clearanceToCreate,
+      feesAssigned: feesToAssign,
+    };
+
+    console.log("[roster-sync API] sync executed", { actingUid: auth.uid, ...summary, partial });
+
+    await recordSyncRun({
+      ...summary,
+      completedAt,
+      actingUid: auth.uid,
+      actorName: auth.actorName,
+      additiveOnly,
+      acknowledgedMassDeactivation: massDeactivation && acknowledgeMassDeactivation,
+      activeTerm: activeTerm ?? null,
+      activeStudentCount,
       partial,
+      batchesCompleted: completed,
+      batchesTotal: batches.length,
+      errorMessage: error ? String((error as Error)?.message ?? error) : null,
     });
 
     return NextResponse.json(
@@ -820,7 +1091,8 @@ export async function POST(req: NextRequest) {
         feesArchived: feeIds.length,
         finesArchived: fineIds.length,
         clearanceArchived: clearanceIds.length,
-        clearanceCreated: pendingClearance.length,
+        clearanceCreated: clearanceToCreate,
+        feesAssigned: feesToAssign,
         completedAt: new Date().toISOString(),
         partial,
         batchesCompleted: completed,

@@ -66,11 +66,17 @@ export default function ValidateStep({
           <p className={`text-[11px] mb-2 ${isBlocked ? "text-red-600" : "text-amber-700"}`}>
             {isBlocked ? (
               <>
-                {summary.unidentifiable} row(s) have a missing or malformed Student ID, so there is
-                no way to tell which student they describe. Those students cannot be protected, and
-                would be deactivated with their Fees, Fines, and Clearance Status for the active
-                term <strong>permanently deleted</strong>. Fix the Student ID in these rows and
-                upload the file again.
+                {summary.unidentifiable} row(s) have a missing or unreadable Student ID, so there is
+                no way to tell which student they describe — and a student nobody can name cannot be
+                protected from being retired. Fix these rows and upload the file again.
+                <br />
+                <span className="block mt-1.5">
+                  A common cause is Excel converting an ID whose first segment is a valid month
+                  (<code>01</code>–<code>12</code>) into a date — <code>07-1-00094</code> becomes
+                  1 July 1994. Format the Student ID column as <strong>Text</strong> and re-export;
+                  the original value cannot be recovered from a file that already stores it as a
+                  date.
+                </span>
               </>
             ) : (
               <>

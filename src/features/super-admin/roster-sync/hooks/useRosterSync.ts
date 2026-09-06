@@ -74,16 +74,31 @@ export function useRosterSync() {
     }
 
     const seen = new Set<string>();
-    const rows: ParsedRosterRow[] = rawRows.map((raw, index) => {
+    const rows: ParsedRosterRow[] = rawRows.map(({ excelRow, raw, dateCoerced }) => {
+      // A date-typed cell is reported on its own terms: the underlying serial
+      // number appears nowhere in the operator's file, so echoing it back sends
+      // them looking for a value that does not exist.
+      if (dateCoerced.length > 0) {
+        const columns = dateCoerced.join(", ");
+        return {
+          rowNumber: excelRow,
+          raw,
+          valid: false,
+          reason:
+            `Excel stored ${columns} as a date (${dateCoerced.map((c) => raw[c]).join(", ")}). ` +
+            `Format that column as Text and re-export — the original value is not recoverable from this file.`,
+        };
+      }
+
       const result = validateRosterRow(raw);
       if (!result.valid) {
-        return { rowNumber: index + 1, raw, valid: false, reason: result.reason };
+        return { rowNumber: excelRow, raw, valid: false, reason: result.reason };
       }
       if (seen.has(result.row.studentId)) {
-        return { rowNumber: index + 1, raw, valid: false, reason: `Duplicate studentId: ${result.row.studentId}` };
+        return { rowNumber: excelRow, raw, valid: false, reason: `Duplicate studentId: ${result.row.studentId}` };
       }
       seen.add(result.row.studentId);
-      return { rowNumber: index + 1, raw, valid: true, row: result.row };
+      return { rowNumber: excelRow, raw, valid: true, row: result.row };
     });
 
     const validRows   = rows.filter((r) => r.valid).map((r) => r.row!);
@@ -244,7 +259,9 @@ export function useRosterSync() {
       `Fees Archived:         ${log.feesArchived}`,
       `Fines Archived:        ${log.finesArchived}`,
       `Clearance Archived:    ${log.clearanceArchived}`,
+      "",
       `Clearance Created:     ${log.clearanceCreated}`,
+      `Fees Assigned:         ${log.feesAssigned}`,
       "",
       log.partial
         ? `Partially completed (${log.batchesCompleted}/${log.batchesTotal} batches). Re-run the same file to finish.`

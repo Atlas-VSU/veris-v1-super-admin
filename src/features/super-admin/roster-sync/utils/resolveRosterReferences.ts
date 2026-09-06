@@ -30,6 +30,9 @@ export interface UnresolvedRosterRow {
 export interface ReferenceResolution {
   rows:         ResolvedRosterRow[];
   unresolvable: UnresolvedRosterRow[];
+  /** Rows that resolved, but with something worth telling the operator — an
+   *  unrecognised faculty label that the program's own faculty covered for. */
+  warnings:     UnresolvedRosterRow[];
 }
 
 /**
@@ -51,12 +54,21 @@ export function referenceKey(value: string): string {
  * moving the student between organizations. Resolution is what makes a
  * transfer real.
  *
+ * Both lookups accept a full name OR an acronym, case-insensitively and with
+ * runs of whitespace collapsed — registrar exports use "FNMS" as readily as
+ * "Faculty of Natural and Mathematical Sciences".
+ *
  * FACULTY IS DERIVED FROM THE PROGRAM, not taken from the CSV: a program
  * already carries its own `facultyId`, and trusting a hand-edited faculty
  * column over the system's own data risks filing a student under a faculty
- * that contradicts their program. The CSV's faculty column is still checked
- * for agreement, and a genuine conflict rejects the row rather than silently
- * picking a winner.
+ * that contradicts their program.
+ *
+ * Because the faculty is derived, an unrecognised faculty label does NOT fail
+ * the row — the program has already placed the student unambiguously, and
+ * dropping them over a label the reference data simply lacks an acronym for
+ * would lose a real student for no gain. It is reported as a warning instead.
+ * A faculty that *does* resolve but contradicts the program is a different
+ * matter: that is a genuine conflict and still rejects the row.
  *
  * An unresolvable row is returned rather than thrown away: its studentId is
  * known, so the caller can leave that student untouched AND exempt them from
@@ -72,6 +84,7 @@ export function resolveRosterReferences(
 ): ReferenceResolution {
   const resolved: ResolvedRosterRow[] = [];
   const unresolvable: UnresolvedRosterRow[] = [];
+  const warnings: UnresolvedRosterRow[] = [];
 
   for (const row of rows) {
     const program = reference.programs.get(referenceKey(row.program));
@@ -81,14 +94,9 @@ export function resolveRosterReferences(
     }
 
     const csvFaculty = reference.faculties.get(referenceKey(row.faculty));
-    if (!csvFaculty) {
-      unresolvable.push({ studentId: row.studentId, reason: `unknown faculty "${row.faculty}"` });
-      continue;
-    }
 
-    // The program's own faculty wins; the CSV column must agree with it.
-    const facultyId = program.facultyId || csvFaculty.id;
-    if (program.facultyId && program.facultyId !== csvFaculty.id) {
+    // A faculty that resolves must agree with the program's own.
+    if (csvFaculty && program.facultyId && program.facultyId !== csvFaculty.id) {
       unresolvable.push({
         studentId: row.studentId,
         reason: `program "${row.program}" does not belong to faculty "${row.faculty}"`,
@@ -96,8 +104,24 @@ export function resolveRosterReferences(
       continue;
     }
 
+    const facultyId = program.facultyId || csvFaculty?.id || "";
+    if (!facultyId) {
+      unresolvable.push({
+        studentId: row.studentId,
+        reason: `cannot determine a faculty: program "${row.program}" has none recorded and "${row.faculty}" is not recognised`,
+      });
+      continue;
+    }
+
+    if (!csvFaculty) {
+      warnings.push({
+        studentId: row.studentId,
+        reason: `faculty "${row.faculty}" not recognised — used the faculty recorded against program "${row.program}"`,
+      });
+    }
+
     resolved.push({ ...row, programId: program.id, facultyId });
   }
 
-  return { rows: resolved, unresolvable };
+  return { rows: resolved, unresolvable, warnings };
 }
