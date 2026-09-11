@@ -1,93 +1,44 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import Link from "next/link";
-import { Users, GraduationCap, ArrowRight } from "lucide-react";
+import { LoginForm } from "./login/LoginForm";
+import Image from "next/image";
+import { Settings } from "lucide-react";
 
-export default function LoginCard() {
+export function LoginCard() {
   return (
-    <div className="relative w-full max-w-sm z-10 animate-fade-in-up mx-auto my-auto">
-      <div
-        className="absolute inset-0 w-full h-full rounded-2xl overflow-hidden z-0"
-        style={{
-          backgroundImage: "url('/images/searchfortruth-2.png')",
-          backgroundSize: "cover",
-          backgroundPosition: "center",
-        }}
-      />
-
-      {/* Main frosted card */}
-      <div
-        className="relative z-10 w-full rounded-2xl px-8 py-10 flex flex-col items-center gap-6"
-        style={{
-        background: "rgba(255, 255, 255, 0.75)",
-          backdropFilter: "blur(3px) saturate(100%)",
-          WebkitBackdropFilter: "blur(3px) saturate(100%)",
-          border: "1px solid rgba(255, 255, 255, 0.3)",
-          boxShadow: "0 8px 40px rgba(27, 94, 32, 0.15), 0 2px 8px rgba(0,0,0,0.08)",
-        }}
-      >
-        {/* Logo */}
-        <img
-          src="/images/foc-logo.png"
-          alt="VERIS Basic"
-          className="w-20 h-20 object-contain"
-        />
-
-        {/* Title */}
-        <div className="text-center">
-          <h2 className="text-3xl font-black text-[#1F7700]">VERIS Basic</h2>
-          <p className="text-sm font-semibold text-[#1F7700] mt-1 leading-relaxed">
-            Welcome! Please select your portal to sign in and access your dashboard.
-          </p>
+    <div
+      className="relative z-10 w-full max-w-md rounded-[32px] p-8 sm:p-10 flex flex-col gap-6"
+      style={{
+        background: "linear-gradient(to bottom, transparent 0%, rgba(255, 255, 255, 0.8) 40%, rgba(255, 255, 255, 1) 80%)",
+        backdropFilter: "blur(24px) saturate(150%)",
+        WebkitBackdropFilter: "blur(24px) saturate(150%)",
+        border: "1px solid rgba(255, 255, 255, 0.4)",
+        boxShadow: "0 20px 40px -10px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255,255,255,0.5)",
+      }}
+    >
+      {/* Wordmark logo */}
+      <div className="flex flex-col items-center gap-3">
+        <span className="grid size-17 place-items-center text-primary">
+          <Image
+            src="/images/veris-logo-superadmin.png"
+            alt="VERIS Logo"
+            width={80}
+            height={80}
+            className="object-contain w-full h-full"
+          />
+        </span>
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.22em] bg-gradient-to-r from-[#2563eb] to-[#93c5fd] bg-clip-text text-transparent">
+            Super Admin Console
+          </span>
+          {/* <span className="text-xl font-extrabold uppercase bg-gradient-to-r from-[#030677] to-[#2563eb] bg-clip-text text-transparent tracking-wide leading-none">
+            VERIS
+          </span> */}
         </div>
-
-        {/* Portal selector tabs */}
-        <div className="grid grid-cols-2 gap-3 w-full">
-          <div className="flex flex-col items-center gap-2 py-4 px-3 rounded-xl bg-white border border-gray-100 shadow-sm">
-            <Users className="size-5 text-gray-500" />
-            <p className="text-xs text-gray-600 font-medium">Admin Portal</p>
-          </div>
-          <div className="flex flex-col items-center gap-2 py-4 px-3 rounded-xl bg-white border border-gray-100 shadow-sm">
-            <GraduationCap className="size-5 text-gray-500" />
-            <p className="text-xs text-gray-600 font-medium">Student Portal</p>
-          </div>
-        </div>
-
-        {/* Sign in buttons */}
-        <div className="flex flex-col gap-3 w-full">
-          <Link href="/admin-dashboard" className="block group">
-            <button
-              className="w-full h-14 flex items-center gap-4 px-5 rounded-xl text-white font-semibold text-sm transition-all duration-200 hover:brightness-110"
-              style={{ backgroundColor: "#269000" }}
-            >
-              <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-white/20">
-                <Users className="size-4" />
-              </div>
-              <span className="flex-1 text-left">Sign in as Admin</span>
-              <ArrowRight className="size-4 transition-transform group-hover:translate-x-1" />
-            </button>
-          </Link>
-
-          <Link href="/portal-dashboard" className="block group">
-            <button
-              className="w-full h-14 flex items-center gap-4 px-5 rounded-xl font-semibold text-sm border-2 transition-all duration-200 bg-white hover:bg-gray-50"
-              style={{ borderColor: "#4a90e2", color: "#2E7D32" }}
-            >
-              <div
-                className="flex items-center justify-center w-8 h-8 rounded-lg"
-                style={{ backgroundColor: "#4a90e222" }}
-              >
-                <GraduationCap className="size-4" />
-              </div>
-              <span className="flex-1 text-left">Sign in as Student</span>
-              <ArrowRight className="size-4 transition-transform group-hover:translate-x-1" />
-            </button>
-          </Link>
-        </div>
-
-        {/* Footer */}
-        <p className="text-xs text-gray-400 pt-2">Powered by VERIS.</p>
       </div>
+
+      <LoginForm />
     </div>
   );
 }
