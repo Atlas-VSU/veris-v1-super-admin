@@ -36,7 +36,7 @@ function StatCard({
   title: string;
   value: string | number;
   subtitle?: string;
-  icon: React.ElementType;
+  icon: React.ComponentType<{ className?: string }>;
   iconClassName: string;
   cardClassName?: string;
   isLoading?: boolean;

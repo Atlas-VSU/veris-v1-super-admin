@@ -45,7 +45,7 @@ function DetailRow({
   label,
   value,
 }: {
-  icon?: React.ElementType;
+  icon?: React.ComponentType<{ className?: string }>;
   label: string;
   value: React.ReactNode;
 }) {
