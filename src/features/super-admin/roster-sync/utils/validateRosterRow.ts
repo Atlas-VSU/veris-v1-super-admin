@@ -6,10 +6,28 @@ export type RosterRowValidation =
   | { valid: true; row: RosterRow }
   | { valid: false; reason: string };
 
+/**
+ * U+FFFD is what a decoder emits when it meets bytes it cannot interpret. The
+ * original character is destroyed at that point — it cannot be recovered from
+ * the string — so a field containing one is proof the file was read with the
+ * wrong encoding. Writing it would silently rename the student ("Ibañez" →
+ * "Iba�ez"), which also breaks search, since lookups are prefix range queries
+ * on the stored name.
+ *
+ * `parseRosterFile` now detects the encoding, so this should not trigger; it is
+ * the backstop that guarantees a mangled name can never reach Firestore.
+ */
+const REPLACEMENT_CHAR = "�";
+
 function validateField(raw: unknown, label: string): { value: string } | { reason: string } {
   const value = (raw ?? "").toString().trim();
   if (!value) return { reason: `Missing ${label}` };
   if (value.length > MAX_FIELD_LENGTH) return { reason: `${label} exceeds ${MAX_FIELD_LENGTH} characters` };
+  if (value.includes(REPLACEMENT_CHAR)) {
+    return {
+      reason: `${label} contains unreadable characters ("${value}") — the file's encoding was not understood. Re-save it as CSV UTF-8.`,
+    };
+  }
   return { value };
 }
 
