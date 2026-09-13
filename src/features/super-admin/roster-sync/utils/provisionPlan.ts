@@ -31,6 +31,24 @@ export interface FeeItemRef {
   semester:              string;
 }
 
+/**
+ * An event an organization has already generated fines for.
+ *
+ * `amount` is resolved by the caller from the event's fine type — doubled when
+ * the type requires a time-out, matching how the org app prices a full absence.
+ */
+export interface FineEventRef {
+  eventId:      string;
+  orgId:        string;
+  eventName:    string;
+  eventDate:    unknown;
+  fineTypeId:   string;
+  fineTypeName: string;
+  amount:       number;
+  academicYear: string;
+  semester:     string;
+}
+
 export interface ProvisionSubject {
   userId:    string;
   studentId: string;
@@ -44,6 +62,11 @@ export interface PlannedFee {
   orgId:   string;
 }
 
+export interface PlannedFine {
+  event: FineEventRef;
+  orgId: string;
+}
+
 export interface PlannedProvision {
   subject:     ProvisionSubject;
   orgId:       string;
@@ -53,25 +76,42 @@ export interface PlannedProvision {
    *  items must never be overwritten, so only the fees are added. */
   clearanceExists: boolean;
   fees:        PlannedFee[];
+  /** Fines for events this organization has already run generation on, which
+   *  the student missed by not being in the system at the time. */
+  fines:       PlannedFine[];
 }
 
 /**
  * Whether a student belongs to an organization.
  *
- * Mirrors the org app's self-registration approval rule: program-level orgs
- * match on programId, faculty-level orgs on facultyId, and an org scoped to
- * neither is university-wide. The org app's own version of this condition has
- * its `&&`/`||` unparenthesized, so an unsubscribed org can match on faculty;
- * that is not reproduced here — callers pass subscribed organizations only.
+ * Scope is decided by the organization's ACCESS LEVEL, never by which id
+ * fields happen to be populated: level 1 is a program, level 2 a faculty,
+ * level 3 the whole university.
+ *
+ * An earlier version keyed on field presence instead and ended with a bare
+ * `return true`, so a faculty-level organization whose `facultyId` was missing
+ * or empty fell through to the university-wide branch and matched EVERY
+ * student — provisioning a clearance record for the entire student body under
+ * that one organization. Those records then appeared on its clearance page,
+ * which reads on `orgId` alone and treats the record's existence as the
+ * membership claim. Fees did not follow, because fee generation in the org app
+ * scopes correctly, which is why the symptom was clearance without fees.
+ *
+ * A scoped organization missing its id now matches NOBODY rather than
+ * everybody: provisioning too few records is visible and repairable, while
+ * provisioning too many silently grants standing across the university.
+ * Mirrors the org app's `onboardNewStudent`, which is deliberately strict for
+ * the same reason. Callers pass subscribed organizations only.
  */
 export function studentBelongsToOrg(
   org: OrgRef,
   programId: string,
   facultyId: string
 ): boolean {
-  if (org.programId) return org.programId === programId;
-  if (org.facultyId) return org.facultyId === facultyId;
-  return true;
+  if (org.accessLevel === 1) return !!org.programId && org.programId === programId;
+  if (org.accessLevel === 2) return !!org.facultyId && org.facultyId === facultyId;
+  if (org.accessLevel === 3) return true;
+  return false;
 }
 
 /**
@@ -93,11 +133,13 @@ export function buildClearanceId(
  * that same fee template. `existingFeeItemIds` is keyed by userId and holds the
  * `feeItemId` of every fee already on that student, so re-running a roster —
  * or recovering from a partially failed one — never charges anybody twice.
+ * `existingFineEventIds` does the same for fines, keyed by userId and holding
+ * every eventId the student has already been fined for.
  *
  * Clearance records that already exist are reported rather than rewritten: the
  * record carries live status and blocking items which a re-run must not reset.
- * Fees are still planned for such students, and the caller merges the resulting
- * blocking items into the existing record.
+ * Fees and fines are still planned for such students, and the caller merges the
+ * resulting blocking items into the existing record.
  */
 export function planProvisions(
   subjects: ProvisionSubject[],
@@ -105,12 +147,15 @@ export function planProvisions(
   feeItemsByOrg: Map<string, FeeItemRef[]>,
   existingFeeItemIds: Map<string, Set<string>>,
   existingClearanceIds: Set<string>,
-  term: { AY: string; semester: string }
+  term: { AY: string; semester: string },
+  fineEventsByOrg: Map<string, FineEventRef[]> = new Map(),
+  existingFineEventIds: Map<string, Set<string>> = new Map()
 ): PlannedProvision[] {
   const planned: PlannedProvision[] = [];
 
   for (const subject of subjects) {
     const alreadyHeld = existingFeeItemIds.get(subject.userId) ?? new Set<string>();
+    const alreadyFined = existingFineEventIds.get(subject.userId) ?? new Set<string>();
 
     for (const org of orgs) {
       if (!studentBelongsToOrg(org, subject.programId, subject.facultyId)) continue;
@@ -120,9 +165,13 @@ export function planProvisions(
         .filter((feeItem) => !alreadyHeld.has(feeItem.id))
         .map((feeItem) => ({ feeItem, orgId: org.id }));
 
+      const fines = (fineEventsByOrg.get(org.id) ?? [])
+        .filter((event) => !alreadyFined.has(event.eventId))
+        .map((event) => ({ event, orgId: org.id }));
+
       // Nothing to do for this pairing — the student already holds every fee
-      // and their clearance record is in place.
-      if (fees.length === 0 && existingClearanceIds.has(clearanceId)) continue;
+      // and fine, and their clearance record is in place.
+      if (fees.length === 0 && fines.length === 0 && existingClearanceIds.has(clearanceId)) continue;
 
       planned.push({
         subject,
@@ -131,6 +180,7 @@ export function planProvisions(
         clearanceId,
         clearanceExists: existingClearanceIds.has(clearanceId),
         fees,
+        fines,
       });
     }
   }
@@ -146,7 +196,15 @@ export function planProvisions(
  * is correct on creation rather than needing a second recalculating pass — a
  * record written as "cleared" while carrying unpaid required fees would read as
  * a student who owes nothing.
+ *
+ * An unpaid fine always blocks: the org app files every fine item as a blocking
+ * item without asking whether it is required, so a fine is required by
+ * construction.
  */
-export function clearanceStatusFor(fees: PlannedFee[]): "cleared" | "not_cleared" {
+export function clearanceStatusFor(
+  fees: PlannedFee[],
+  fines: PlannedFine[] = []
+): "cleared" | "not_cleared" {
+  if (fines.length > 0) return "not_cleared";
   return fees.some((f) => f.feeItem.isRequiredForClearance) ? "not_cleared" : "cleared";
 }
