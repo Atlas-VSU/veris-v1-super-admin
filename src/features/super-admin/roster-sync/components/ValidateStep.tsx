@@ -10,6 +10,8 @@ export default function ValidateStep({
   isLoadingPreview,
   additiveOnly,
   onAdditiveOnlyChange,
+  useRecoveredIds,
+  onUseRecoveredIdsChange,
   onProceed,
   onReset,
 }: {
@@ -18,6 +20,8 @@ export default function ValidateStep({
   isLoadingPreview:     boolean;
   additiveOnly:         boolean;
   onAdditiveOnlyChange: (v: boolean) => void;
+  useRecoveredIds:      boolean;
+  onUseRecoveredIdsChange: (v: boolean) => void;
   onProceed:            () => void;
   onReset:              () => void;
 }) {
@@ -112,6 +116,35 @@ export default function ValidateStep({
         <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700">
           <AlertTriangle className="size-3.5 shrink-0 mt-0.5" />
           No valid roster rows were found in this file. Please upload a different file.
+        </div>
+      )}
+
+      {/* Excel retypes a Student ID like 07-1-00094 as a date. The text can be
+          rebuilt from the date's parts, but more than one ID can produce the
+          same date — so it is offered, never assumed. */}
+      {summary.recoverableIds > 0 && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+          <label className="flex items-start gap-2.5 cursor-pointer">
+            <input
+              type="checkbox"
+              className="mt-0.5 accent-blue-600"
+              checked={useRecoveredIds}
+              onChange={(e) => onUseRecoveredIdsChange(e.target.checked)}
+            />
+            <span className="text-xs">
+              <span className="font-semibold text-blue-900">
+                Use recovered Student IDs ({summary.recoverableIds} row
+                {summary.recoverableIds === 1 ? "" : "s"})
+              </span>
+              <span className="block text-blue-700 mt-0.5">
+                Excel stored these Student IDs as dates. The original text can be rebuilt from the
+                date — <code>1994-07-01</code> becomes <code>07-1-00094</code> — but a date can come
+                from more than one ID, so <strong>check the recovered values against your source
+                list before continuing</strong>. Leaving this off skips those rows instead; the
+                students are not deactivated either way.
+              </span>
+            </span>
+          </label>
         </div>
       )}
 

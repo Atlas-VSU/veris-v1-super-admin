@@ -16,8 +16,9 @@
 
 import { useState, useCallback } from "react";
 import { toast } from "sonner";
-import { SyncStep, ValidationSummary, ParsedRosterRow, RosterSyncPreview, RosterSyncResult } from "../types";
+import { SyncStep, ValidationSummary, ParsedRosterRow, ParsedFileRow, RosterSyncPreview, RosterSyncResult } from "../types";
 import { parseRosterFile } from "../utils/parseRosterFile";
+import { buildRosterCsv, selectRowsByStudentId } from "../utils/buildRosterCsv";
 import { validateRosterRow } from "../utils/validateRosterRow";
 import { normaliseStudentId } from "../utils/normaliseStudentId";
 import { STUDENT_ID_RE } from "../const";
@@ -47,6 +48,101 @@ function formatApiError(err: { error?: string; details?: string[] }, status: num
   return `${base} — ${shown}${more}`;
 }
 
+/**
+ * Turns parsed file rows into the validation summary the Validate step shows.
+ *
+ * `useRecovered` decides how a Student ID that Excel stored as a date is
+ * treated. Rejected (the default) the row is skipped, since the value in the
+ * file is a date and no student is named by it. Accepted, the rebuilt candidate
+ * stands in for the original and the row validates like any other — the
+ * operator has taken responsibility for it being the right student.
+ *
+ * Pure, so the same file can be revalidated under either choice without being
+ * re-read from disk.
+ */
+function buildValidationSummary(
+  parsed: ParsedFileRow[],
+  useRecovered: boolean
+): ValidationSummary {
+  const seen = new Set<string>();
+
+  const rows: ParsedRosterRow[] = parsed.map(({ excelRow, raw, dateCoerced, recovered }) => {
+    const recoveredId = recovered?.studentId;
+    // Only the Student ID can be rebuilt; a name Excel ate is gone for good, so
+    // a row with any other date-typed column stays unusable either way.
+    const otherDateColumns = dateCoerced.filter((c) => c !== "studentId");
+    const idRecovered = useRecovered && !!recoveredId && dateCoerced.includes("studentId");
+
+    if (otherDateColumns.length > 0 || (dateCoerced.includes("studentId") && !idRecovered)) {
+      const columns = (idRecovered ? otherDateColumns : dateCoerced).join(", ");
+      const shown = (idRecovered ? otherDateColumns : dateCoerced)
+        .map((c) => raw[c])
+        .join(", ");
+      const suggestion =
+        recoveredId && !useRecovered
+          ? ` The Student ID looks like "${recoveredId}" — accept recovered IDs below to use it, or format the column as Text and re-export.`
+          : " Format that column as Text and re-export — the original value is not recoverable from this file.";
+
+      return {
+        rowNumber: excelRow,
+        raw,
+        valid: false,
+        reason: `Excel stored ${columns} as a date (${shown}).${suggestion}`,
+      };
+    }
+
+    const candidateRaw = idRecovered ? { ...raw, studentId: recoveredId } : raw;
+
+    const result = validateRosterRow(candidateRaw);
+    if (!result.valid) {
+      return { rowNumber: excelRow, raw: candidateRaw, valid: false, reason: result.reason };
+    }
+    if (seen.has(result.row.studentId)) {
+      return {
+        rowNumber: excelRow,
+        raw: candidateRaw,
+        valid: false,
+        reason: `Duplicate studentId: ${result.row.studentId}`,
+      };
+    }
+    seen.add(result.row.studentId);
+    return { rowNumber: excelRow, raw: candidateRaw, valid: true, row: result.row };
+  });
+
+  const validRows  = rows.filter((r) => r.valid).map((r) => r.row!);
+  const duplicates = rows.filter((r) => r.reason?.startsWith("Duplicate studentId")).length;
+  const invalid    = rows.filter((r) => !r.valid).length - duplicates;
+
+  // A skipped row can be made harmless only if we can still say which student
+  // it was about — that studentId is sent as an exemption so the sync leaves
+  // them alone instead of deactivating them.
+  const excludedStudentIds = new Set<string>();
+  let unidentifiable = 0;
+  for (const row of rows) {
+    if (row.valid) continue;
+    const studentId = normaliseStudentId((row.raw.studentId ?? "").toString().trim());
+    if (STUDENT_ID_RE.test(studentId)) {
+      excludedStudentIds.add(studentId);
+    } else {
+      unidentifiable++;
+    }
+  }
+
+  return {
+    total: rows.length,
+    valid: validRows.length,
+    duplicates,
+    invalid,
+    validRows,
+    rows,
+    excludedStudentIds: [...excludedStudentIds],
+    unidentifiable,
+    // Offered regardless of the current choice, so the Validate step can show
+    // the option even while it is switched off.
+    recoverableIds: parsed.filter((p) => p.recovered?.studentId).length,
+  };
+}
+
 export function useRosterSync() {
   const [step, setStep]                         = useState<SyncStep>("upload");
   const [fileName, setFileName]                 = useState<string>("");
@@ -60,10 +156,17 @@ export function useRosterSync() {
   // operator opts into the destructive half deliberately.
   const [additiveOnly, setAdditiveOnly]         = useState(true);
   const [acknowledgeMass, setAcknowledgeMass]   = useState(false);
+  // The parsed file is retained so validation can be recomputed when the
+  // operator accepts recovered Student IDs, without asking for the file again.
+  const [parsedRows, setParsedRows]             = useState<ParsedFileRow[]>([]);
+  // Off by default: a Student ID rebuilt from a date is a candidate, not a
+  // fact, and using the wrong one attaches the row to a different student.
+  const [useRecoveredIds, setUseRecoveredIds]   = useState(false);
 
   // ── Step 1 → 2: Parse & validate uploaded file ───────────────────────────
   const handleFileSelected = useCallback(async (file: File) => {
     setFileName(file.name);
+    setUseRecoveredIds(false);
 
     let rawRows: Awaited<ReturnType<typeof parseRosterFile>> = [];
     try {
@@ -72,68 +175,24 @@ export function useRosterSync() {
       toast.error("Failed to parse file", { description: err?.message });
       return;
     }
+    setParsedRows(rawRows);
 
-    const seen = new Set<string>();
-    const rows: ParsedRosterRow[] = rawRows.map(({ excelRow, raw, dateCoerced }) => {
-      // A date-typed cell is reported on its own terms: the underlying serial
-      // number appears nowhere in the operator's file, so echoing it back sends
-      // them looking for a value that does not exist.
-      if (dateCoerced.length > 0) {
-        const columns = dateCoerced.join(", ");
-        return {
-          rowNumber: excelRow,
-          raw,
-          valid: false,
-          reason:
-            `Excel stored ${columns} as a date (${dateCoerced.map((c) => raw[c]).join(", ")}). ` +
-            `Format that column as Text and re-export — the original value is not recoverable from this file.`,
-        };
-      }
-
-      const result = validateRosterRow(raw);
-      if (!result.valid) {
-        return { rowNumber: excelRow, raw, valid: false, reason: result.reason };
-      }
-      if (seen.has(result.row.studentId)) {
-        return { rowNumber: excelRow, raw, valid: false, reason: `Duplicate studentId: ${result.row.studentId}` };
-      }
-      seen.add(result.row.studentId);
-      return { rowNumber: excelRow, raw, valid: true, row: result.row };
-    });
-
-    const validRows   = rows.filter((r) => r.valid).map((r) => r.row!);
-    const duplicates  = rows.filter((r) => r.reason?.startsWith("Duplicate studentId")).length;
-    const invalid     = rows.filter((r) => !r.valid).length - duplicates;
-
-    // A skipped row can be made harmless only if we can still say which
-    // student it was about — that studentId is sent as an exemption so the
-    // sync leaves them alone instead of deactivating them.
-    const excludedStudentIds = new Set<string>();
-    let unidentifiable = 0;
-    for (const parsed of rows) {
-      if (parsed.valid) continue;
-      const studentId = normaliseStudentId((parsed.raw.studentId ?? "").toString().trim());
-      if (STUDENT_ID_RE.test(studentId)) {
-        excludedStudentIds.add(studentId);
-      } else {
-        unidentifiable++;
-      }
-    }
-
-    const summary: ValidationSummary = {
-      total: rows.length,
-      valid: validRows.length,
-      duplicates,
-      invalid,
-      validRows,
-      rows,
-      excludedStudentIds: [...excludedStudentIds],
-      unidentifiable,
-    };
-
-    setValidation(summary);
+    setValidation(buildValidationSummary(rawRows, false));
     setStep("validate");
   }, []);
+
+  /**
+   * Accepts or rejects the Student IDs rebuilt from date-typed cells, and
+   * revalidates the file already in hand. Toggling re-runs the whole summary
+   * because accepting an ID can also surface a duplicate it collides with.
+   */
+  const applyRecoveredIds = useCallback(
+    (accepted: boolean) => {
+      setUseRecoveredIds(accepted);
+      setValidation(buildValidationSummary(parsedRows, accepted));
+    },
+    [parsedRows]
+  );
 
   // ── Step 2 → 3: Dry-run preview ──────────────────────────────────────────
   const handleProceedToPreview = useCallback(async () => {
@@ -238,6 +297,8 @@ export function useRosterSync() {
     setIsExecuting(false);
     setAdditiveOnly(true);
     setAcknowledgeMass(false);
+    setParsedRows([]);
+    setUseRecoveredIds(false);
   }, []);
 
   // ── Download/copy result ──────────────────────────────────────────────────
@@ -262,6 +323,9 @@ export function useRosterSync() {
       "",
       `Clearance Created:     ${log.clearanceCreated}`,
       `Fees Assigned:         ${log.feesAssigned}`,
+      `Fines Assigned:        ${log.finesAssigned}`,
+      `Students Reactivated:  ${log.reactivated}`,
+      `Records Restored:      ${log.recordsRestored}`,
       "",
       log.partial
         ? `Partially completed (${log.batchesCompleted}/${log.batchesTotal} batches). Re-run the same file to finish.`
@@ -292,6 +356,36 @@ export function useRosterSync() {
     URL.revokeObjectURL(url);
   }, [result, buildResultText]);
 
+  /**
+   * Downloads the students this roster would create, in the import format.
+   *
+   * Built from the rows the operator uploaded rather than from the preview
+   * payload: the preview truncates its list for display, and rebuilding the
+   * file from the original rows means the exported columns match the imported
+   * ones by construction instead of by a mapping kept in step by hand.
+   */
+  const handleExportNewStudents = useCallback(() => {
+    if (!validation || !preview || preview.createStudentIds.length === 0) return;
+
+    const newRows = selectRowsByStudentId(validation.validRows, preview.createStudentIds);
+    if (newRows.length === 0) {
+      toast.info("No new students to export.");
+      return;
+    }
+
+    // BOM so Excel opens the file as UTF-8 and does not mangle accented names.
+    const blob = new Blob(["﻿" + buildRosterCsv(newRows)], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `new-students-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Exported ${newRows.length} new student(s).`);
+  }, [validation, preview]);
+
   return {
     // State
     step,
@@ -306,6 +400,8 @@ export function useRosterSync() {
     acknowledgeMass,
 
     // Actions
+    useRecoveredIds,
+    applyRecoveredIds,
     setAdditiveOnly,
     setAcknowledgeMass,
     setConfirmOpen,
@@ -316,5 +412,6 @@ export function useRosterSync() {
     handleReset,
     handleCopyResult,
     handleDownloadResult,
+    handleExportNewStudents,
   };
 }

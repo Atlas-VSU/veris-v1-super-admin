@@ -11,19 +11,37 @@ function normaliseHeader(cell: unknown): string {
     .replace(/\s+/g, " ");
 }
 
-/** Parses a CSV or XLSX file into a header row + data rows using SheetJS,
- *  which (unlike a naive comma-split) correctly handles quoted fields —
- *  important here since name fields can contain commas.
+/**
+ * Parses a CSV or XLSX file into a header row + data rows using SheetJS, which
+ * (unlike a naive comma-split) correctly handles quoted fields — important here
+ * since name fields can contain commas.
  *
- *  `cellDates` is on so that a cell Excel stored as a date arrives as a `Date`
- *  rather than its underlying serial number. Without it a Student ID like
- *  "07-1-00094" — which Excel reads as 1 July 1994 — reaches validation as the
- *  bare number 34516, and the operator is shown a value that appears nowhere in
- *  their file. See `formatDateCell`. */
+ * THE TWO FORMATS ARE READ DIFFERENTLY, because the damage a date-shaped
+ * Student ID suffers is only recoverable in one of them.
+ *
+ * CSV is plain text: the file still holds "07-1-00094" exactly as typed, and it
+ * is only SheetJS's own type inference that would turn it into 1 July 1994.
+ * `raw` switches that inference off, so every cell arrives as the text the file
+ * actually contains. Nothing is guessed, and nothing needs recovering.
+ *
+ * XLSX has no such option. Excel converts the cell when the sheet is saved, so
+ * the file stores a date serial and the typed text is already gone — reading it
+ * raw yields 34516, which appears nowhere in the operator's file. `cellDates`
+ * at least surfaces it as a `Date`, which is enough to recognise the problem,
+ * report it against a recognisable value, and offer a reconstruction. See
+ * `recoverDateStudentId`.
+ *
+ * Only IDs whose final segment reads as a plausible year are affected at all:
+ * "07-1-00094" becomes a date, while "07-1-00343" and "22-1-00454" do not.
+ */
 function readSheetRows(buffer: string | ArrayBuffer, isCsv: boolean): unknown[][] {
-  const workbook = isCsv
-    ? XLSX.read(buffer as string, { type: "string", cellDates: true })
-    : XLSX.read(buffer as ArrayBuffer, { type: "array", cellDates: true });
+  if (isCsv) {
+    const workbook = XLSX.read(buffer as string, { type: "string", raw: true });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    return XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "", raw: true });
+  }
+
+  const workbook = XLSX.read(buffer as ArrayBuffer, { type: "array", cellDates: true });
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
   return XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "" });
 }
