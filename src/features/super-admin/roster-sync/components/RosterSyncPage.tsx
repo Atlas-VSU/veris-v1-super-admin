@@ -27,6 +27,8 @@ export default function RosterSyncPage() {
     isLoadingPreview,
     additiveOnly,
     acknowledgeMass,
+    useRecoveredIds,
+    applyRecoveredIds,
     setAdditiveOnly,
     setAcknowledgeMass,
     setConfirmOpen,
@@ -37,6 +39,7 @@ export default function RosterSyncPage() {
     handleReset,
     handleCopyResult,
     handleDownloadResult,
+    handleExportNewStudents,
   } = useRosterSync();
 
   const {
@@ -80,6 +83,8 @@ export default function RosterSyncPage() {
                 isLoadingPreview={isLoadingPreview}
                 additiveOnly={additiveOnly}
                 onAdditiveOnlyChange={setAdditiveOnly}
+                useRecoveredIds={useRecoveredIds}
+                onUseRecoveredIdsChange={applyRecoveredIds}
                 onProceed={handleProceedToPreview}
                 onReset={handleReset}
               />
@@ -92,6 +97,7 @@ export default function RosterSyncPage() {
                 onAcknowledgeMassChange={setAcknowledgeMass}
                 onConfirm={handleConfirm}
                 onBack={handleReset}
+                onExportNewStudents={handleExportNewStudents}
               />
             )}
 
@@ -103,6 +109,8 @@ export default function RosterSyncPage() {
                 onCopy={handleCopyResult}
                 onDownload={handleDownloadResult}
                 onReset={handleReset}
+                onExportNewStudents={handleExportNewStudents}
+                canExportNewStudents={(preview?.createStudentIds.length ?? 0) > 0}
               />
             )}
           </div>
