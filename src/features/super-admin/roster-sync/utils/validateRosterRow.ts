@@ -1,5 +1,6 @@
 import { STUDENT_ID_RE, MAX_FIELD_LENGTH } from "../const";
 import { normaliseStudentId } from "./normaliseStudentId";
+import { parseYearLevel } from "./parseYearLevel";
 import type { RawRosterRow, RosterRow } from "../types";
 
 export type RosterRowValidation =
@@ -53,8 +54,11 @@ export function validateRosterRow(raw: RawRosterRow): RosterRowValidation {
   const lastName  = validateField(raw.lastName, "lastName");
   if ("reason" in lastName) return { valid: false, reason: lastName.reason };
 
-  const yearLevel = validateField(raw.yearLevel, "yearLevel");
-  if ("reason" in yearLevel) return { valid: false, reason: yearLevel.reason };
+  // Parsed to an integer here, at the single validation boundary, so every
+  // downstream consumer — the diff, the write, the export — sees the same type
+  // the rest of the system stores. See `parseYearLevel`.
+  const yearLevel = parseYearLevel(raw.yearLevel);
+  if (!yearLevel.ok) return { valid: false, reason: yearLevel.reason };
 
   const program   = validateField(raw.program, "program");
   if ("reason" in program) return { valid: false, reason: program.reason };

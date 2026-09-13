@@ -6,7 +6,11 @@ export interface ExistingStudent {
   studentId: string;
   firstName: string;
   lastName:  string;
-  yearLevel: string;
+  yearLevel: number;
+  /** False when the stored year level is not already an integer — e.g. text
+   *  such as "3". Such a record is rewritten even if the number matches, so
+   *  the collection converges on one type. See `readStoredYearLevel`. */
+  yearLevelIsCanonical: boolean;
   program:   string;
   faculty:   string;
   programId: string;
@@ -23,7 +27,7 @@ export interface UpdateOp {
   studentId:   string;
   firstName:   string;
   lastName:    string;
-  yearLevel:   string;
+  yearLevel:   number;
   program:     string;
   faculty:     string;
   programId:   string;
@@ -105,6 +109,10 @@ export function diffRoster(
       existing.firstName !== row.firstName ||
       existing.lastName !== row.lastName ||
       existing.yearLevel !== row.yearLevel ||
+      // A year level stored as text is rewritten even when the number matches,
+      // so the collection converges on one type. The value alone compares
+      // equal, so without this such a record would never be corrected.
+      !existing.yearLevelIsCanonical ||
       existing.program !== row.program ||
       existing.faculty !== row.faculty;
     const reactivated = existing.isDeleted === true;
