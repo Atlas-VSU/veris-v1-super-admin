@@ -8,11 +8,16 @@ export default function CompleteStep({
   onCopy,
   onDownload,
   onReset,
+  onExportNewStudents,
+  canExportNewStudents,
 }: {
-  result:     RosterSyncResult;
-  onCopy:     () => void;
-  onDownload: () => void;
-  onReset:    () => void;
+  result:               RosterSyncResult;
+  onCopy:               () => void;
+  onDownload:           () => void;
+  onReset:              () => void;
+  onExportNewStudents:  () => void;
+  /** False when this run created nobody — the export would be an empty file. */
+  canExportNewStudents: boolean;
 }) {
   return (
     <div className="space-y-5">
@@ -99,6 +104,16 @@ export default function CompleteStep({
           >
             <Download className="size-3.5" /> Download Result
           </Button>
+          {canExportNewStudents && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onExportNewStudents}
+              className="border-slate-200 text-slate-600 gap-1.5"
+            >
+              <Download className="size-3.5" /> Export New Students
+            </Button>
+          )}
         </div>
         <Button
           variant="outline"

@@ -90,8 +90,10 @@ import {
   buildClearanceId,
   studentBelongsToOrg,
   type FeeItemRef,
+  type FineEventRef,
   type OrgRef,
 } from "@/features/super-admin/roster-sync/utils/provisionPlan";
+import { readStoredYearLevel } from "@/features/super-admin/roster-sync/utils/parseYearLevel";
 import {
   deactivationRatio,
   exceedsDeactivationThreshold,
@@ -348,12 +350,18 @@ async function fetchExistingRoster(): Promise<{
     const seated = map.get(studentId);
     if (seated && !seated.isDeleted && isDeleted) return;
 
+    // Read as a number, and flagged when not already an integer. Comparing the
+    // stringified value would make every integer-stored student look "changed"
+    // now that the roster side is a number; see `readStoredYearLevel`.
+    const storedYearLevel = readStoredYearLevel(d.yearLevel);
+
     map.set(studentId, {
       docId: doc.id,
       studentId,
       firstName: String(d.firstName ?? ""),
       lastName: String(d.lastName ?? ""),
-      yearLevel: String(d.yearLevel ?? ""),
+      yearLevel: storedYearLevel.value,
+      yearLevelIsCanonical: storedYearLevel.canonical,
       program: String(d.program ?? ""),
       faculty: String(d.faculty ?? ""),
       programId: String(d.programId ?? ""),
@@ -438,6 +446,31 @@ async function fetchReferenceData(): Promise<RosterReferenceData> {
  */
 const CLEARANCE_DEFAULT_DUE_DATE = new Date("2026-12-30");
 
+/** Days out to fall back to once the configured due date is in the past. */
+const CLEARANCE_FALLBACK_WINDOW_DAYS = 120;
+
+/**
+ * The due date a newly created clearance record should carry.
+ *
+ * Mirrors `resolveClearanceDueDate` in the organization apps, including the
+ * guard: once the configured date has passed, every clearance created after it
+ * would otherwise be born overdue. Both applications write to the same
+ * `clearanceStatus` collection, so a student provisioned by a roster sync must
+ * not end up with a different deadline from one provisioned by the org app.
+ */
+function resolveClearanceDueDate(): Date {
+  if (CLEARANCE_DEFAULT_DUE_DATE.getTime() > Date.now()) return CLEARANCE_DEFAULT_DUE_DATE;
+
+  console.warn(
+    `[roster-sync] CLEARANCE_DEFAULT_DUE_DATE (${CLEARANCE_DEFAULT_DUE_DATE
+      .toISOString()
+      .slice(0, 10)}) has passed — defaulting to ${CLEARANCE_FALLBACK_WINDOW_DAYS} days out so ` +
+      `new clearances are not created overdue. Update it for the current academic calendar.`
+  );
+
+  return new Date(Date.now() + CLEARANCE_FALLBACK_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+}
+
 /**
  * Address for a student the roster gives no email for.
  *
@@ -505,6 +538,137 @@ async function fetchFeeItemsByOrg(
   }
 
   return byOrg;
+}
+
+/**
+ * The events each organization has already generated fines for, priced from
+ * their fine type.
+ *
+ * Mirrors the org app's `assignExistingFinesToStudent`: a student who joins
+ * after generation has run missed those events, and the org app charges them on
+ * arrival. Doing the same here keeps a roster-created student consistent with
+ * one added through the members page.
+ *
+ * `requiresTimeOut` doubles the amount, matching how the org app prices an
+ * absence from an event that needed both a time-in and a time-out.
+ */
+async function fetchFineEventsByOrg(
+  orgIds: string[],
+  term: ActiveTerm
+): Promise<Map<string, FineEventRef[]>> {
+  const byOrg = new Map<string, FineEventRef[]>();
+  // Fine types are shared across events; resolved once and reused.
+  const fineTypeCache = new Map<string, { name: string; amount: number } | null>();
+
+  const resolveFineType = async (fineTypeId: string) => {
+    if (fineTypeCache.has(fineTypeId)) return fineTypeCache.get(fineTypeId)!;
+    const doc = await adminDb.collection("fineTypes").doc(fineTypeId).get();
+    const data = doc.data();
+    const resolved = doc.exists
+      ? {
+          name: String(data?.name ?? ""),
+          amount:
+            Number(data?.defaultAmount ?? 0) * (data?.requiresTimeOut === true ? 2 : 1),
+        }
+      : null;
+    fineTypeCache.set(fineTypeId, resolved);
+    return resolved;
+  };
+
+  for (const orgId of orgIds) {
+    const snap = await adminDb
+      .collection("events")
+      .where("orgId", "==", orgId)
+      .where("finesGenerated", "==", true)
+      .where("isDeleted", "==", false)
+      .where("academicYear", "==", term.AY)
+      .where("semester", "==", term.semester)
+      .get();
+
+    if (snap.empty) continue;
+
+    const events: FineEventRef[] = [];
+    for (const doc of snap.docs) {
+      const d = doc.data();
+      const fineTypeId = String(d.fineTypeId ?? "");
+      if (!fineTypeId) continue;
+
+      const fineType = await resolveFineType(fineTypeId);
+      // An event whose fine type has been deleted cannot be priced. Skipping is
+      // the only safe option — inventing an amount would charge students money
+      // nobody set.
+      if (!fineType) continue;
+
+      events.push({
+        eventId: doc.id,
+        orgId,
+        eventName: String(d.name ?? "Unknown Event"),
+        eventDate: d.date ?? null,
+        fineTypeId,
+        fineTypeName: fineType.name,
+        amount: fineType.amount,
+        academicYear: String(d.academicYear ?? term.AY),
+        semester: String(d.semester ?? term.semester),
+      });
+    }
+
+    if (events.length > 0) byOrg.set(orgId, events);
+  }
+
+  return byOrg;
+}
+
+/**
+ * Which events each student has already been fined for, and the parent `fines`
+ * document holding them.
+ *
+ * Fine items live in a subcollection of the parent, so both come from the same
+ * read: the parent identifies where new items go, and its existing items say
+ * which events to skip.
+ */
+async function fetchExistingFineState(
+  userIds: string[],
+  term: ActiveTerm
+): Promise<{
+  parentFineIds: Map<string, string>;
+  finedEventIds: Map<string, Set<string>>;
+}> {
+  const parentFineIds = new Map<string, string>();
+  const finedEventIds = new Map<string, Set<string>>();
+  if (userIds.length === 0) return { parentFineIds, finedEventIds };
+
+  for (let i = 0; i < userIds.length; i += FIRESTORE_IN_QUERY_LIMIT) {
+    const chunk = userIds.slice(i, i + FIRESTORE_IN_QUERY_LIMIT);
+    const snap = await adminDb
+      .collection("fines")
+      .where("userId", "in", chunk)
+      .where("academicYear", "==", term.AY)
+      .get();
+
+    for (const doc of snap.docs) {
+      const d = doc.data();
+      // The org app writes the semester both bare and suffixed, so both forms
+      // have to be accepted or a student gets a second parent document.
+      const semester = String(d.semester ?? "");
+      if (semester !== term.semester && semester !== `${term.semester} Semester`) continue;
+
+      const userId = String(d.userId ?? "");
+      const orgId = String(d.orgId ?? "");
+      if (!userId || !orgId) continue;
+
+      parentFineIds.set(`${userId}::${orgId}`, doc.id);
+
+      const itemsSnap = await doc.ref.collection("fineItems").get();
+      const seen = finedEventIds.get(userId) ?? new Set<string>();
+      itemsSnap.docs.forEach((item) => {
+        const eventId = item.data().eventId;
+        if (eventId) seen.add(String(eventId));
+      });
+      finedEventIds.set(userId, seen);
+    }
+  }
+
+  return { parentFineIds, finedEventIds };
 }
 
 /**
@@ -633,13 +797,77 @@ async function fetchMatchingTermRecordIds(
   return ids;
 }
 
+/**
+ * Stamped on every record this endpoint archives, and the only marker it will
+ * restore. A fee an organization archived deliberately carries a different
+ * reason (or none) and is left alone — reviving it would overrule the treasurer
+ * who put it away.
+ */
+const SYNC_ARCHIVE_REASON = "roster-sync: student absent from synchronized roster";
+
 /** Queues the archive write for one record, honouring that collection's flag path. */
 function queueArchive(batch: WriteBatch, collectionName: string, docId: string, now: Date): void {
   const archiveField = ARCHIVE_FIELD[collectionName];
   const update: Record<string, unknown> = {
     [archiveField]: true,
     archivedAt: now,
-    archivedReason: "roster-sync: student absent from synchronized roster",
+    archivedReason: SYNC_ARCHIVE_REASON,
+  };
+  if (archiveField.startsWith("metadata.")) update["metadata.updatedAt"] = now;
+  else update.updatedAt = now;
+
+  batch.update(adminDb.collection(collectionName).doc(docId), update);
+}
+
+/**
+ * Finds the records a returning student should get back.
+ *
+ * The mirror of `fetchMatchingTermRecordIds`: same term scoping, opposite
+ * archive state. Two conditions have to hold for a record to be restorable —
+ * it is archived, and *this endpoint* is what archived it. Restoring anything
+ * else would undo a deliberate decision made in the organization app.
+ *
+ * Term-scoped like everything else here, which is what keeps a previous
+ * semester's fees and fines out of it: a student returning after a year away
+ * gets this term's records back, not last year's dues.
+ */
+async function fetchRestorableTermRecordIds(
+  collectionName: string,
+  studentIds: string[],
+  AY: string,
+  semester: string
+): Promise<string[]> {
+  if (studentIds.length === 0) return [];
+  const archiveField = ARCHIVE_FIELD[collectionName];
+  const ids: string[] = [];
+
+  for (let i = 0; i < studentIds.length; i += FIRESTORE_IN_QUERY_LIMIT) {
+    const chunk = studentIds.slice(i, i + FIRESTORE_IN_QUERY_LIMIT);
+    const snap = await adminDb
+      .collection(collectionName)
+      .where("studentId", "in", chunk)
+      .where("academicYear", "==", AY)
+      .where("semester", "==", semester)
+      .get();
+    snap.docs.forEach((d) => {
+      const data = d.data();
+      if (!archiveField || !readFlag(data, archiveField)) return;
+      if (data.archivedReason !== SYNC_ARCHIVE_REASON) return;
+      ids.push(d.id);
+    });
+  }
+
+  return ids;
+}
+
+/** Queues the un-archive write, clearing the markers so the record is
+ *  indistinguishable from one that was never archived. */
+function queueRestore(batch: WriteBatch, collectionName: string, docId: string, now: Date): void {
+  const archiveField = ARCHIVE_FIELD[collectionName];
+  const update: Record<string, unknown> = {
+    [archiveField]: false,
+    archivedAt: FieldValue.delete(),
+    archivedReason: FieldValue.delete(),
   };
   if (archiveField.startsWith("metadata.")) update["metadata.updatedAt"] = now;
   else update.updatedAt = now;
@@ -762,21 +990,74 @@ export async function POST(req: NextRequest) {
         ])
       : [[], [], []];
 
+    // ── Restoring returning students ──────────────────────────────────────
+    // A student who reappears in the roster is reactivated rather than created
+    // afresh — `fetchExistingRoster` matches them by Student ID even while
+    // archived. Their records come back with them, so the student is not left
+    // live but stripped of the term's fees, fines and clearance.
+    //
+    // Only this term's records, and only ones this endpoint archived. Restoring
+    // runs in additive-only mode too: giving a returning student their records
+    // back retires nobody, which is the only thing that mode withholds.
+    const reactivatedStudentIds = plan.toUpdate
+      .filter((op) => op.reactivated)
+      .map((op) => op.studentId);
+
+    const [feeRestoreIds, fineRestoreIds, clearanceRestoreIds] = activeTerm
+      ? await Promise.all([
+          fetchRestorableTermRecordIds("fees", reactivatedStudentIds, activeTerm.AY, activeTerm.semester),
+          fetchRestorableTermRecordIds("fines", reactivatedStudentIds, activeTerm.AY, activeTerm.semester),
+          fetchRestorableTermRecordIds("clearanceStatus", reactivatedStudentIds, activeTerm.AY, activeTerm.semester),
+        ])
+      : [[], [], []];
+
+    const recordsRestored =
+      feeRestoreIds.length + fineRestoreIds.length + clearanceRestoreIds.length;
+
     // ── Provisioning for newly created students ───────────────────────────
     // A create's document ID is its studentId (see the create op below), so a
     // student can be provisioned in the same run that creates them.
-    const provisionSubjects = plan.toCreate.map(({ row }) => ({
-      userId: row.studentId,
-      studentId: row.studentId,
-      userName: `${row.firstName} ${row.lastName}`.trim(),
-      programId: row.programId,
-      facultyId: row.facultyId,
-    }));
+    const provisionSubjects = [
+      ...plan.toCreate.map(({ row }) => ({
+        userId: row.studentId,
+        studentId: row.studentId,
+        userName: `${row.firstName} ${row.lastName}`.trim(),
+        programId: row.programId,
+        facultyId: row.facultyId,
+      })),
+      // Returning students are provisioned on the same terms as new ones.
+      // Restoring their archived records is not enough on its own: a student
+      // retired before their organization issued this term's dues has nothing
+      // to restore, and the portal reads "not enrolled for the current term"
+      // because that judgement is made on whether any clearance, fee, fine or
+      // payment record exists for the term.
+      //
+      // Their document ID is the existing one, not the Student ID — only
+      // created students are keyed by Student ID. `planProvisions` skips
+      // anything they already hold, so a student whose records were restored a
+      // moment ago is not charged for them twice.
+      ...plan.toUpdate
+        .filter((op) => op.reactivated)
+        .map((op) => ({
+          userId: op.docId,
+          studentId: op.studentId,
+          userName: `${op.firstName} ${op.lastName}`.trim(),
+          programId: op.programId,
+          facultyId: op.facultyId,
+        })),
+    ];
 
     let provisions: ReturnType<typeof planProvisions> = [];
+    // Keyed `userId::orgId` — where an existing parent fines document was
+    // found, new items are added to it rather than a second one being created.
+    let existingParentFineIds = new Map<string, string>();
     if (activeTerm && provisionSubjects.length > 0 && subscribedOrgs.length > 0) {
       const relevantOrgIds = subscribedOrgs.map((o) => o.id);
-      const feeItemsByOrg = await fetchFeeItemsByOrg(relevantOrgIds, activeTerm);
+      const [feeItemsByOrg, fineEventsByOrg, fineState] = await Promise.all([
+        fetchFeeItemsByOrg(relevantOrgIds, activeTerm),
+        fetchFineEventsByOrg(relevantOrgIds, activeTerm),
+        fetchExistingFineState(provisionSubjects.map((s) => s.userId), activeTerm),
+      ]);
 
       // Both lookups guard against writing something the student already has:
       // fees they already hold, and clearance records already in place.
@@ -800,12 +1081,16 @@ export async function POST(req: NextRequest) {
         feeItemsByOrg,
         heldFeeItemIds,
         existingClearanceIds,
-        activeTerm
+        activeTerm,
+        fineEventsByOrg,
+        fineState.finedEventIds
       );
+      existingParentFineIds = fineState.parentFineIds;
     }
 
     const clearanceToCreate = provisions.filter((p) => !p.clearanceExists).length;
     const feesToAssign = provisions.reduce((n, p) => n + p.fees.length, 0);
+    const finesToAssign = provisions.reduce((n, p) => n + p.fines.length, 0);
 
     if (dryRun) {
       return NextResponse.json({
@@ -823,9 +1108,17 @@ export async function POST(req: NextRequest) {
         activeStudentCount,
         clearanceToCreate,
         feesToAssign,
+        finesToAssign,
+        reactivated: reactivatedStudentIds.length,
+        recordsToRestore: recordsRestored,
         unresolvedRows: resolution.unresolvable.slice(0, 500),
         referenceWarnings: resolution.warnings.slice(0, 500),
         createPreview: plan.toCreate.slice(0, 500).map((op) => ({ studentId: op.row.studentId, fullName: `${op.row.firstName} ${op.row.lastName}`.trim() })),
+        // Every new student's id, uncapped — `createPreview` is truncated for
+        // display, but the export must cover the whole set. Ids only: the
+        // client still holds the uploaded rows and rebuilds the file from
+        // those, so the exported columns are the imported ones by construction.
+        createStudentIds: plan.toCreate.map((op) => op.row.studentId),
         updatePreview: plan.toUpdate.slice(0, 500).map((op) => ({ studentId: op.studentId, fullName: `${op.firstName} ${op.lastName}`.trim(), reactivated: op.reactivated })),
         transferPreview: transfers.slice(0, 500).map((op) => ({
           studentId: op.studentId,
@@ -902,8 +1195,117 @@ export async function POST(req: NextRequest) {
     const feeItemAssignments = new Map<string, number>();
 
     for (const provision of provisions) {
-      const { subject, orgId, clearanceId, clearanceExists, fees } = provision;
+      const { subject, orgId, clearanceId, clearanceExists, fees, fines } = provision;
       const blockingItems: Record<string, unknown> = {};
+
+      if (fines.length > 0) {
+        // One parent `fines` document per student, organization and term, with
+        // the individual charges as items beneath it — the shape the org app
+        // reads. An existing parent is reused so a student never ends up with
+        // two.
+        const parentKey = `${subject.userId}::${orgId}`;
+        const existingParentId = existingParentFineIds.get(parentKey);
+        const parentRef = existingParentId
+          ? adminDb.collection("fines").doc(existingParentId)
+          : adminDb.collection("fines").doc();
+
+        const total = fines.reduce((sum, f) => sum + f.event.amount, 0);
+        const earliest = fines[0].event.eventDate ?? null;
+        const latest = fines[fines.length - 1].event.eventDate ?? null;
+
+        if (!existingParentId) {
+          ops.push((batch) =>
+            batch.create(parentRef, {
+              orgId,
+              userId: subject.userId,
+              studentId: subject.studentId,
+              userName: subject.userName,
+              academicYear: activeTerm!.AY,
+              semester: activeTerm!.semester,
+              accumulatedAmount: total,
+              paidAmount: 0,
+              balance: total,
+              status: "unpaid",
+              fineItemsCount: fines.length,
+              firstFineIssuedAt: earliest,
+              lastFineIssuedAt: latest,
+              dueDate: null,
+              waivedAmount: null,
+              waivedBy: null,
+              waivedReason: null,
+              waivedAt: null,
+              remarks: null,
+              metadata: { createdAt: now, updatedAt: now, isArchived: false },
+            })
+          );
+        } else {
+          // Increments rather than assignment: the parent already carries
+          // charges this run knows nothing about.
+          ops.push((batch) =>
+            batch.update(parentRef, {
+              accumulatedAmount: FieldValue.increment(total),
+              balance: FieldValue.increment(total),
+              fineItemsCount: FieldValue.increment(fines.length),
+              lastFineIssuedAt: latest,
+              "metadata.updatedAt": now,
+            })
+          );
+        }
+
+        fines.forEach(({ event }, index) => {
+          const itemRef = parentRef.collection("fineItems").doc();
+          ops.push((batch) =>
+            batch.create(itemRef, {
+              itemNumber: index + 1,
+              fineTypeId: event.fineTypeId,
+              fineTypeName: event.fineTypeName,
+              eventId: event.eventId,
+              eventName: event.eventName,
+              eventDate: event.eventDate ?? null,
+              amount: event.amount,
+              reason: `Fine for being absent in event ${event.eventName}`,
+              issuedBy: "Roster Synchronization",
+              issuedAt: now,
+              isWaived: false,
+              waivedBy: null,
+              waivedReason: null,
+              waivedAt: null,
+              appealNotes: null,
+              appealedAt: null,
+              appealStatus: null,
+              appealResolvedAt: null,
+              appealResolvedBy: null,
+              metadata: { createdAt: now, updatedAt: now, isArchived: false },
+              isPaid: false,
+              isArchived: false,
+              isPending: false,
+              academicYear: event.academicYear,
+              semester: event.semester,
+              parentFineId: parentRef.id,
+              userId: subject.userId,
+              studentId: subject.studentId,
+              userName: subject.userName,
+              orgId,
+            })
+          );
+
+          // Every fine blocks clearance — the org app files them all as
+          // blocking items without asking whether they are required.
+          blockingItems[itemRef.id] = {
+            type: "fines",
+            referenceId: itemRef.id,
+            parentFineId: parentRef.id,
+            title: event.eventName,
+            balance: event.amount,
+            status: "unpaid",
+            paymentHistory: [],
+            pendingReview: false,
+            isRequiredForClearance: true,
+            academicYear: event.academicYear,
+            semester: event.semester,
+          };
+        });
+      }
 
       for (const { feeItem } of fees) {
         const feeRef = adminDb.collection("fees").doc();
@@ -972,13 +1374,13 @@ export async function POST(req: NextRequest) {
             studentId: subject.studentId,
             academicYear: activeTerm!.AY,
             semester: activeTerm!.semester,
-            status: clearanceStatusFor(fees),
+            status: clearanceStatusFor(fees, fines),
             visibility: "public",
             blockingItems,
             clearanceDate: null,
             lastCalculatedAt: now,
             startDate: now,
-            dueDate: CLEARANCE_DEFAULT_DUE_DATE,
+            dueDate: resolveClearanceDueDate(),
             createdAt: now,
             updatedAt: now,
             isArchived: false,
@@ -998,6 +1400,48 @@ export async function POST(req: NextRequest) {
           updatedAt: now,
         })
       );
+    }
+
+    // Per-organization student counts, matching what `onboardNewStudent` keeps
+    // up to date in the organization apps. Without this the roster sync — by
+    // far the highest-volume way a student is created — is the one path that
+    // leaves the dashboards under-counting.
+    //
+    // Aggregated per organization for the same reason as the fee templates
+    // above: one increment rather than one per student.
+    //
+    // `set` with merge, not `update`: the organization apps create the stats
+    // document lazily on first use, so it may legitimately not exist yet and an
+    // `update` would fail the whole batch. The other counters are seeded to
+    // zero rather than left absent, so a document created here has the same
+    // shape as one the org app would have written.
+    if (activeTerm) {
+      const studentsPerOrg = new Map<string, number>();
+      for (const provision of provisions) {
+        if (provision.clearanceExists) continue; // already counted on a previous run
+        studentsPerOrg.set(provision.orgId, (studentsPerOrg.get(provision.orgId) ?? 0) + 1);
+      }
+
+      for (const [orgId, count] of studentsPerOrg) {
+        const statsId = `${activeTerm.AY}-${activeTerm.semester}-${orgId}`;
+        ops.push((batch) =>
+          batch.set(
+            adminDb.collection("stats").doc(statsId),
+            {
+              id: statsId,
+              orgId,
+              totalStudents: FieldValue.increment(count),
+              totalFines: FieldValue.increment(0),
+              totalFees: FieldValue.increment(0),
+              totalCollectedFines: FieldValue.increment(0),
+              totalCollectedFees: FieldValue.increment(0),
+              totalUnpaidFines: FieldValue.increment(0),
+              totalUnpaidFees: FieldValue.increment(0),
+            },
+            { merge: true }
+          )
+        );
+      }
     }
 
     for (const deactivate of plan.toDeactivate) {
@@ -1021,6 +1465,17 @@ export async function POST(req: NextRequest) {
     }
     for (const id of clearanceIds) {
       ops.push((batch) => queueArchive(batch, "clearanceStatus", id, now));
+    }
+
+    // Returning students get this term's records back.
+    for (const id of feeRestoreIds) {
+      ops.push((batch) => queueRestore(batch, "fees", id, now));
+    }
+    for (const id of fineRestoreIds) {
+      ops.push((batch) => queueRestore(batch, "fines", id, now));
+    }
+    for (const id of clearanceRestoreIds) {
+      ops.push((batch) => queueRestore(batch, "clearanceStatus", id, now));
     }
 
     const batches = chunkArray(ops, BATCH_LIMIT).map((chunk) => {
@@ -1057,6 +1512,9 @@ export async function POST(req: NextRequest) {
       clearanceArchived: clearanceIds.length,
       clearanceCreated: clearanceToCreate,
       feesAssigned: feesToAssign,
+      finesAssigned: finesToAssign,
+      reactivated: reactivatedStudentIds.length,
+      recordsRestored,
     };
 
     console.log("[roster-sync API] sync executed", { actingUid: auth.uid, ...summary, partial });
@@ -1093,6 +1551,9 @@ export async function POST(req: NextRequest) {
         clearanceArchived: clearanceIds.length,
         clearanceCreated: clearanceToCreate,
         feesAssigned: feesToAssign,
+        finesAssigned: finesToAssign,
+        reactivated: reactivatedStudentIds.length,
+        recordsRestored,
         completedAt: new Date().toISOString(),
         partial,
         batchesCompleted: completed,

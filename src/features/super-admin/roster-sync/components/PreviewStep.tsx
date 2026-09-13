@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowRightLeft, ShieldAlert, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ArrowRightLeft, Download, ShieldAlert, ShieldCheck } from "lucide-react";
 import { RosterSyncPreview } from "../types";
 import { StatCard } from "./StatCard";
 import { Button } from "@/components/ui/button";
@@ -9,12 +9,14 @@ export default function PreviewStep({
   onAcknowledgeMassChange,
   onConfirm,
   onBack,
+  onExportNewStudents,
 }: {
   preview:                 RosterSyncPreview;
   acknowledgeMass:         boolean;
   onAcknowledgeMassChange: (v: boolean) => void;
   onConfirm:               () => void;
   onBack:                  () => void;
+  onExportNewStudents:     () => void;
 }) {
   // The server refuses a run over the threshold unless it is acknowledged, so
   // the button must not promise something the request will reject.
@@ -135,6 +137,31 @@ export default function PreviewStep({
         </div>
       )}
 
+      {preview.reactivated > 0 && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
+          <p className="text-xs font-semibold text-emerald-800 flex items-center gap-1 mb-1">
+            <ShieldCheck className="size-3.5" /> Returning students: {preview.reactivated}
+          </p>
+          <p className="text-[11px] text-emerald-700">
+            These students are already in the system but were previously retired. They are being
+            reactivated — <strong>not created again</strong>, so their history stays attached to
+            the same record.
+            {preview.recordsToRestore > 0 ? (
+              <>
+                {" "}
+                <strong>{preview.recordsToRestore}</strong> archived record(s) from this term are
+                being restored with them. Records from previous semesters are left as they are.
+              </>
+            ) : (
+              <> They have no archived records from this term to restore.</>
+            )}{" "}
+            They are also provisioned like new students, so anything their organizations have
+            issued since they left is added — without which the student portal would still show
+            them as not enrolled for the current term.
+          </p>
+        </div>
+      )}
+
       {preview.toTransfer > 0 && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
           <p className="text-xs font-semibold text-amber-700 flex items-center gap-1 mb-1">
@@ -198,12 +225,13 @@ export default function PreviewStep({
             New students to be created: {preview.toCreate}
           </p>
           <p className="text-[11px] text-emerald-700 mb-2">
-            Each will be given a Clearance Status record and their organization&apos;s existing
-            fees for the active term — the same provisioning an approved self-registration
-            receives.{" "}
-            <strong>{preview.clearanceToCreate}</strong> clearance record(s) and{" "}
-            <strong>{preview.feesToAssign}</strong> fee(s) will be created. A fee a student
-            already holds is never assigned twice.
+            Each will be given a Clearance Status record, their organization&apos;s existing fees
+            for the active term, and fines for events the organization has already generated
+            fines for — the same provisioning an approved self-registration receives. Across all
+            students being provisioned: <strong>{preview.clearanceToCreate}</strong> clearance
+            record(s), <strong>{preview.feesToAssign}</strong> fee(s) and{" "}
+            <strong>{preview.finesToAssign}</strong> fine(s). Anything a student already holds is
+            never assigned twice.
           </p>
           {preview.createPreview.length > 0 && (
             <div className="font-mono text-[11px] text-emerald-700 max-h-28 overflow-y-auto space-y-0.5">
@@ -212,6 +240,20 @@ export default function PreviewStep({
               ))}
             </div>
           )}
+          {preview.createPreview.length < preview.toCreate && (
+            <p className="text-[11px] text-emerald-700 mt-1">
+              Showing the first {preview.createPreview.length}. Export the file below for the full
+              list.
+            </p>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onExportNewStudents}
+            className="mt-2 gap-1.5 border-emerald-300 text-emerald-800 hover:bg-emerald-100"
+          >
+            <Download className="size-3.5" /> Export new students (CSV)
+          </Button>
         </div>
       )}
 

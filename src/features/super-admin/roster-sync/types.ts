@@ -30,7 +30,9 @@ export interface RosterRow {
   studentId: string;
   firstName: string;
   lastName:  string;
-  yearLevel: string;
+  /** An integer from 1 to 6 — the form every other onboarding path stores. The
+   *  roster cell may say "3" or "3rd Year"; see `parseYearLevel`. */
+  yearLevel: number;
   program:   string;
   faculty:   string;
   /** Empty when the roster carried no address — the caller derives one. Only
@@ -58,6 +60,13 @@ export interface ParsedFileRow {
   /** Columns Excel had stored as dates. The text originally typed is gone from
    *  the file, so these cannot be repaired here — only reported. */
   dateCoerced: RosterColumn[];
+  /**
+   * Values rebuilt from a date-typed cell, keyed by column. Present only for
+   * Student ID, and only when the date could have come from one. A candidate,
+   * never a certainty — the operator confirms it before it is used, because
+   * more than one Student ID can produce the same date.
+   */
+  recovered:   Partial<Record<RosterColumn, string>>;
 }
 
 export interface ParsedRosterRow {
@@ -81,6 +90,10 @@ export interface ValidationSummary {
    * with the sync so the server exempts them from deactivation — a skipped
    * student has not left the university.
    */
+  /** Rows whose Student ID could be rebuilt from a date-typed cell. Counted
+   *  whether or not the operator has accepted them, so the option can be
+   *  offered while switched off. */
+  recoverableIds: number;
   excludedStudentIds: string[];
   /**
    * Skipped rows whose studentId itself is missing or malformed. Nobody can
@@ -119,6 +132,7 @@ export interface RosterSyncLogEntry {
   clearanceArchived:   number;
   clearanceCreated:    number;
   feesAssigned:        number;
+  finesAssigned:       number;
   partial:             boolean;
   batchesCompleted:    number;
   batchesTotal:        number;
@@ -163,6 +177,9 @@ export interface TransferPreviewEntry {
 export interface RosterSyncPreview extends RosterSyncSummary {
   dryRun: true;
   createPreview:      { studentId: string; fullName: string }[];
+  /** Every new student's id, uncapped — `createPreview` is truncated for
+   *  display, so the export uses this to cover the whole set. */
+  createStudentIds:   string[];
   updatePreview:      { studentId: string; fullName: string; reactivated: boolean }[];
   transferPreview:    TransferPreviewEntry[];
   deactivatePreview:  { studentId: string; fullName: string }[];
@@ -187,6 +204,15 @@ export interface RosterSyncPreview extends RosterSyncSummary {
   /** Organization fees that would be assigned to newly added students. Fees a
    *  student already holds are never counted, so a re-run reports zero. */
   feesToAssign:       number;
+  /** Fines for already-generated events that would be charged to students
+   *  being provisioned — events they missed by not being in the system. Fines
+   *  a student already holds are never counted. */
+  finesToAssign:      number;
+  /** Students returning to the roster who would be reactivated rather than
+   *  created again. */
+  reactivated:        number;
+  /** Records that would be un-archived for them — this term's only. */
+  recordsToRestore:   number;
 }
 
 export interface RosterSyncResult extends RosterSyncSummary {
@@ -196,9 +222,16 @@ export interface RosterSyncResult extends RosterSyncSummary {
   feesArchived:      number;
   finesArchived:     number;
   clearanceArchived: number;
-  /** Provisioning applied to newly added students. */
+  /** Students who reappeared in the roster and were reactivated rather than
+   *  created again. */
+  reactivated:       number;
+  /** Records un-archived for those returning students — this term's only, and
+   *  only ones a previous sync had archived. */
+  recordsRestored:   number;
+  /** Provisioning applied to newly added and returning students. */
   clearanceCreated:  number;
   feesAssigned:      number;
+  finesAssigned:     number;
   completedAt:      string;
   partial:          boolean;
   batchesCompleted: number;
